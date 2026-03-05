@@ -1,0 +1,166 @@
+---
+title: "Introduction"
+description: "Your code is under new management. Agents that review your code using Claude-powered skills."
+---
+
+## What is Warden?
+
+Warden is an event-driven code analysis agent that reviews your code using Claude-powered skills. It runs locally via CLI or automatically on every pull request through GitHub Actions.
+
+Unlike traditional linters that run predefined rules, Warden uses Claude to perform sophisticated code analysis through modular "skills" - reusable agents that can detect bugs, review architecture, check security vulnerabilities, and more.
+
+## Why Warden?
+
+<CardGroup cols={2}>
+  <Card title="Skills, not prompts" icon="scroll">
+    Define analysis once, run it anywhere. Skills are shareable, version-controlled agents that follow the agentskills.io specification.
+  </Card>
+  <Card title="Two ways to run" icon="code-branch">
+    CLI catches issues before you push. GitHub Action reviews every PR automatically.
+  </Card>
+  <Card title="GitHub-native" icon="comment">
+    Findings appear as inline PR comments with suggested fixes that can be applied automatically.
+  </Card>
+  <Card title="Cost tracking" icon="dollar-sign">
+    Built-in usage tracking shows exactly how much each skill run costs.
+  </Card>
+</CardGroup>
+
+## Core Concepts
+
+<CardGroup cols={2}>
+  <Card title="Skills" icon="wand-magic-sparkles" href="/concepts/skills">
+    Claude-powered code analysis agents that detect issues in your codebase
+  </Card>
+  <Card title="Triggers" icon="bolt" href="/concepts/triggers">
+    Event-driven conditions that determine when skills run
+  </Card>
+  <Card title="Findings" icon="magnifying-glass" href="/concepts/findings">
+    Issues detected by skills with severity, confidence, and suggested fixes
+  </Card>
+  <Card title="Configuration" icon="gear" href="/concepts/configuration">
+    TOML-based configuration for skills, triggers, and runtime behavior
+  </Card>
+</CardGroup>
+
+## How It Works
+
+<Steps>
+  <Step title="Configure skills in warden.toml">
+    Define which skills to run, when they trigger, and how they behave:
+
+    ```toml warden.toml
+    version = 1
+
+    [defaults]
+    failOn = "high"
+    reportOn = "medium"
+
+    [[skills]]
+    name = "find-bugs"
+    paths = ["src/**/*.ts"]
+
+    [[skills.triggers]]
+    type = "pull_request"
+    actions = ["opened", "synchronize"]
+    ```
+  </Step>
+
+  <Step title="Run Warden locally or in CI">
+    Execute Warden via CLI or GitHub Action:
+
+    ```bash
+    # Run on uncommitted changes
+    npx warden
+
+    # Run on specific files
+    npx warden src/api/
+
+    # Fix issues automatically
+    npx warden --fix
+    ```
+  </Step>
+
+  <Step title="Review findings">
+    Warden analyzes your code with Claude and reports findings:
+
+    - **CLI**: Terminal output with colors and severity badges
+    - **GitHub**: Inline PR comments with suggested fixes
+    - **JSON/JSONL**: Machine-readable output for integration
+  </Step>
+
+  <Step title="Apply fixes">
+    Accept suggested fixes automatically or review them first:
+
+    ```bash
+    # Interactive fix mode
+    npx warden --fix
+
+    # Apply all fixes automatically
+    npx warden --fix --yes
+    ```
+  </Step>
+</Steps>
+
+## Use Cases
+
+### Bug Detection
+Catch bugs before they reach production with skills that understand your codebase's patterns and anti-patterns.
+
+```toml warden.toml
+[[skills]]
+name = "find-bugs"
+paths = ["src/**/*.ts"]
+ignorePaths = ["**/*.test.ts"]
+```
+
+### Architecture Review
+Enforce architectural patterns and detect violations across your codebase.
+
+```toml warden.toml
+[[skills]]
+name = "architecture-review"
+paths = ["src/**/*.ts"]
+failOn = "medium"
+```
+
+### Security Scanning
+Detect security vulnerabilities and common attack vectors with schedule-based scanning.
+
+```toml warden.toml
+[[skills]]
+name = "security-audit"
+
+[[skills.triggers]]
+type = "schedule"
+
+[skills.triggers.schedule]
+createFixPR = true
+```
+
+### Code Quality
+Maintain code quality standards with custom skills tailored to your team's conventions.
+
+```toml warden.toml
+[[skills]]
+name = "code-quality"
+reportOn = "low"
+reportOnSuccess = true
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Warden and set up authentication
+  </Card>
+  <Card title="CLI Commands" icon="terminal" href="/cli/overview">
+    Learn all CLI commands and options
+  </Card>
+  <Card title="Create Skills" icon="wand-magic-sparkles" href="/skills/creating-skills">
+    Write your own custom analysis skills
+  </Card>
+</CardGroup>

@@ -1,122 +1,135 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Warden",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#848484",
+    "light": "#0d0d0d",
+    "dark": "#c8c8c8"
   },
-  "favicon": "/favicon.svg",
+
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/getsentry/warden"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/getsentry/warden"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/skills",
+              "concepts/triggers",
+              "concepts/findings",
+              "concepts/configuration"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "CLI Usage",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "cli/overview",
+              "cli/init",
+              "cli/analyze",
+              "cli/fix",
+              "cli/logs",
+              "cli/add",
+              "cli/sync",
+              "cli/setup-app"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "GitHub Action",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "github-action/setup",
+              "github-action/configuration",
+              "github-action/inputs-outputs"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/warden-toml",
+              "configuration/skill-config",
+              "configuration/triggers",
+              "configuration/path-filtering",
+              "configuration/severity-thresholds"
+            ]
+          },
+          {
+            "group": "Skills",
+            "pages": [
+              "skills/overview",
+              "skills/creating-skills",
+              "skills/skill-structure",
+              "skills/builtin-skills",
+              "skills/remote-skills"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/authentication",
+              "advanced/cost-tracking",
+              "advanced/retry-logic",
+              "advanced/output-formats",
+              "advanced/troubleshooting"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Library API",
             "pages": [
-              "api-reference/introduction"
+              "api/overview",
+              "api/run-skill",
+              "api/config-loading",
+              "api/event-context",
+              "api/trigger-matching",
+              "api/output-rendering"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Types",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/types/skill-report",
+              "api/types/finding",
+              "api/types/event-context",
+              "api/types/configuration"
+            ]
+          },
+          {
+            "group": "CLI Commands",
+            "pages": [
+              "api/cli/warden",
+              "api/cli/init",
+              "api/cli/add",
+              "api/cli/logs",
+              "api/cli/sync",
+              "api/cli/setup-app"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

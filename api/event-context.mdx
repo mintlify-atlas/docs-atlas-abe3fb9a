@@ -1,0 +1,359 @@
+---
+title: buildEventContext()
+description: Parse GitHub webhook payloads into EventContext for skill execution
+---
+
+The `buildEventContext()` function transforms GitHub webhook events into a normalized `EventContext` structure that Warden uses for skill execution.
+
+## Function Signature
+
+```typescript
+async function buildEventContext(
+  eventName: string,
+  eventPayload: unknown,
+  repoPath: string,
+  octokit: Octokit
+): Promise<EventContext>
+```
+
+<ParamField path="eventName" type="string" required>
+  GitHub event type (e.g., `'pull_request'`, `'schedule'`).
+  
+  In GitHub Actions, read from `github.event_name`:
+  ```typescript
+  const eventName = process.env.GITHUB_EVENT_NAME || 'pull_request';
+  ```
+</ParamField>
+
+<ParamField path="eventPayload" type="unknown" required>
+  GitHub webhook payload. In Actions, read from `GITHUB_EVENT_PATH`:
+  
+  ```typescript
+  import { readFileSync } from 'fs';
+  const eventPath = process.env.GITHUB_EVENT_PATH!;
+  const eventPayload = JSON.parse(readFileSync(eventPath, 'utf-8'));
+  ```
+</ParamField>
+
+<ParamField path="repoPath" type="string" required>
+  Absolute path to the cloned repository on disk.
+  
+  In Actions:
+  ```typescript
+  const repoPath = process.env.GITHUB_WORKSPACE!;
+  ```
+</ParamField>
+
+<ParamField path="octokit" type="Octokit" required>
+  Authenticated Octokit instance for fetching PR file metadata:
+  
+  ```typescript
+  import { Octokit } from '@octokit/rest';
+  const octokit = new Octokit({ 
+    auth: process.env.GITHUB_TOKEN 
+  });
+  ```
+</ParamField>
+
+## Returns
+
+<ResponseField name="EventContext" type="object">
+  Normalized event context:
+  
+  ```typescript
+  interface EventContext {
+    eventType: GitHubEventType;
+    action: string;
+    repository: RepositoryContext;
+    pullRequest?: PullRequestContext;
+    repoPath: string;
+  }
+  ```
+</ResponseField>
+
+### EventContext Fields
+
+<ResponseField name="eventType" type="GitHubEventType">
+  GitHub event type:
+  - `'pull_request'`
+  - `'schedule'`
+  - `'issues'`
+  - `'issue_comment'`
+  - `'pull_request_review'`
+  - `'pull_request_review_comment'`
+</ResponseField>
+
+<ResponseField name="action" type="string">
+  Event action (e.g., `'opened'`, `'synchronize'`, `'reopened'`).
+</ResponseField>
+
+<ResponseField name="repository" type="RepositoryContext">
+  Repository metadata:
+  
+  ```typescript
+  interface RepositoryContext {
+    owner: string;          // e.g., "getsentry"
+    name: string;           // e.g., "warden"
+    fullName: string;       // e.g., "getsentry/warden"
+    defaultBranch: string;  // e.g., "main"
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="pullRequest" type="PullRequestContext | undefined">
+  Pull request context (only present for `eventType === 'pull_request'`):
+  
+  ```typescript
+  interface PullRequestContext {
+    number: number;
+    title: string;
+    body: string | null;
+    author: string;
+    baseBranch: string;
+    headBranch: string;
+    headSha: string;
+    baseSha: string;
+    files: FileChange[];
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="repoPath" type="string">
+  Absolute path to the repository on disk.
+</ResponseField>
+
+### FileChange Fields
+
+<ResponseField name="FileChange" type="object">
+  Per-file change metadata:
+  
+  ```typescript
+  interface FileChange {
+    filename: string;
+    status: 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
+    additions: number;
+    deletions: number;
+    patch?: string;  // Unified diff patch
+  }
+  ```
+</ResponseField>
+
+## Example: GitHub Actions
+
+Minimal GitHub Action integration:
+
+```typescript
+import { buildEventContext } from '@sentry/warden';
+import { Octokit } from '@octokit/rest';
+import { readFileSync } from 'fs';
+
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+const repoPath = process.env.GITHUB_WORKSPACE!;
+const eventName = process.env.GITHUB_EVENT_NAME!;
+const eventPayload = JSON.parse(
+  readFileSync(process.env.GITHUB_EVENT_PATH!, 'utf-8')
+);
+
+const context = await buildEventContext(
+  eventName,
+  eventPayload,
+  repoPath,
+  octokit
+);
+
+console.log(`PR #${context.pullRequest?.number}: ${context.pullRequest?.title}`);
+console.log(`Files changed: ${context.pullRequest?.files.length}`);
+```
+
+## Example: Webhook Server
+
+Handle webhook events in a Node.js server:
+
+```typescript
+import express from 'express';
+import { buildEventContext } from '@sentry/warden';
+import { Octokit } from '@octokit/rest';
+import { execSync } from 'child_process';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+
+const app = express();
+app.use(express.json());
+
+app.post('/webhooks/github', async (req, res) => {
+  const eventName = req.headers['x-github-event'] as string;
+  const eventPayload = req.body;
+  
+  // Clone repo to temp dir
+  const repoPath = mkdtempSync(join(tmpdir(), 'warden-'));
+  const cloneUrl = eventPayload.repository.clone_url;
+  execSync(`git clone ${cloneUrl} ${repoPath}`);
+  
+  // Build context
+  const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+  const context = await buildEventContext(
+    eventName,
+    eventPayload,
+    repoPath,
+    octokit
+  );
+  
+  // Process event
+  // ...
+  
+  res.status(200).send('OK');
+});
+
+app.listen(3000);
+```
+
+## Example: Filter Context by Paths
+
+Combine with `filterContextByPaths()` to apply path filters:
+
+```typescript
+import { 
+  buildEventContext, 
+  filterContextByPaths 
+} from '@sentry/warden';
+
+const context = await buildEventContext(
+  eventName,
+  eventPayload,
+  repoPath,
+  octokit
+);
+
+// Filter to only TypeScript files
+const tsContext = filterContextByPaths(context, {
+  paths: ['**/*.ts', '**/*.tsx'],
+  ignorePaths: ['**/test/**'],
+});
+
+console.log(`Filtered: ${tsContext.pullRequest?.files.length} TS files`);
+```
+
+## Error Handling
+
+Throws `EventContextError` on validation failures:
+
+```typescript
+import { 
+  buildEventContext, 
+  EventContextError 
+} from '@sentry/warden';
+
+try {
+  const context = await buildEventContext(
+    eventName,
+    eventPayload,
+    repoPath,
+    octokit
+  );
+} catch (error) {
+  if (error instanceof EventContextError) {
+    console.error('Invalid event payload:', error.message);
+    // Possible causes:
+    // - Missing required fields (repository, pull_request, etc.)
+    // - Invalid field types
+    // - Malformed webhook payload
+  }
+}
+```
+
+## Validation
+
+The function validates:
+
+- **Event payload structure** - Required fields present and correctly typed
+- **Repository metadata** - Owner, name, default branch
+- **Pull request data** - Number, title, base/head refs (if present)
+- **Final context** - Complete structure matches `EventContextSchema`
+
+## API Calls
+
+For `pull_request` events, the function makes paginated API calls to fetch file metadata:
+
+```typescript
+// Fetches all changed files with pagination
+const files = await octokit.paginate(octokit.pulls.listFiles, {
+  owner,
+  repo,
+  pull_number,
+  per_page: 100,
+});
+```
+
+Each file includes:
+- Filename and status
+- Additions/deletions counts
+- Unified diff patch (if available)
+
+## Non-PR Events
+
+For non-PR events (e.g., `schedule`), `pullRequest` is `undefined`:
+
+```typescript
+const context = await buildEventContext(
+  'schedule',
+  schedulePayload,
+  repoPath,
+  octokit
+);
+
+if (context.pullRequest) {
+  // PR-specific logic
+} else {
+  // Schedule or other event types
+}
+```
+
+## Context Usage
+
+The returned context is passed to:
+
+- [`runSkill()`](/api/run-skill) - For code analysis
+- [`matchTrigger()`](/api/trigger-matching) - For trigger filtering
+- [`filterContextByPaths()`](/api/trigger-matching#filtercontextbypaths) - For path filtering
+
+```typescript
+import { 
+  buildEventContext,
+  loadWardenConfig,
+  resolveSkillConfigs,
+  matchTrigger,
+  resolveSkillAsync,
+  runSkill,
+} from '@sentry/warden';
+
+// Build context
+const context = await buildEventContext(
+  eventName,
+  eventPayload,
+  repoPath,
+  octokit
+);
+
+// Load config and match triggers
+const config = loadWardenConfig(repoPath);
+const triggers = resolveSkillConfigs(config);
+const matchedTriggers = triggers.filter(t => 
+  matchTrigger(t, context, 'github')
+);
+
+// Run matched skills
+for (const trigger of matchedTriggers) {
+  const skill = await resolveSkillAsync(trigger.name, repoPath);
+  const report = await runSkill(skill, context, {
+    model: trigger.model,
+    failOn: trigger.failOn,
+  });
+}
+```
+
+## Related Functions
+
+- [`matchTrigger()`](/api/trigger-matching) - Filter skills by event context
+- [`filterContextByPaths()`](/api/trigger-matching#filtercontextbypaths) - Apply path filters
+- [`runSkill()`](/api/run-skill) - Execute analysis with context

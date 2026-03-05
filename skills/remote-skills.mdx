@@ -1,0 +1,494 @@
+---
+title: 'Remote Skills'
+description: 'Using skills from other repositories'
+---
+
+Warden can load skills from remote GitHub repositories, enabling skill sharing across projects.
+
+## Quick Start
+
+<Steps>
+  <Step title="Configure remote skill">
+    ```toml warden.toml
+    [[skills]]
+    name = "code-simplifier"
+    remote = "getsentry/sentry-skills"
+    
+    [[skills.triggers]]
+    type = "pull_request"
+    ```
+  </Step>
+  
+  <Step title="Run Warden">
+    ```bash
+    warden run
+    ```
+    
+    Warden automatically:
+    - Clones the remote repository
+    - Caches it locally
+    - Discovers available skills
+    - Loads the specified skill
+  </Step>
+</Steps>
+
+## Remote Formats
+
+Warden supports multiple remote reference formats:
+
+<CodeGroup>
+```toml Shorthand (GitHub)
+[[skills]]
+name = "code-simplifier"
+remote = "getsentry/sentry-skills"
+```
+
+```toml Pinned to commit SHA
+[[skills]]
+name = "code-simplifier"
+remote = "getsentry/sentry-skills@a1b2c3d4"
+```
+
+```toml HTTPS URL
+[[skills]]
+name = "code-simplifier"
+remote = "https://github.com/getsentry/sentry-skills"
+```
+
+```toml SSH URL (for private repos)
+[[skills]]
+name = "code-simplifier"
+remote = "git@github.com:getsentry/sentry-skills.git"
+```
+</CodeGroup>
+
+## Cache Behavior
+
+Remote skills are cached locally to avoid repeated network calls:
+
+### Cache Location
+
+- Default: `~/.local/warden/skills/`
+- Override: Set `WARDEN_STATE_DIR` environment variable
+
+```bash
+# Custom cache location
+export WARDEN_STATE_DIR=/tmp/warden-cache
+warden run
+```
+
+### Cache Structure
+
+```
+~/.local/warden/skills/
+├── getsentry/
+│   ├── sentry-skills/              # Unpinned remote
+│   └── sentry-skills@a1b2c3d4/     # Pinned to SHA
+├── myorg/
+│   └── shared-skills/
+└── state.json                       # Metadata (SHAs, fetch times)
+```
+
+### Refresh Behavior
+
+<AccordionGroup>
+  <Accordion title="Unpinned Remotes (owner/repo)">
+    **TTL**: 24 hours (default)
+    
+    Warden automatically fetches updates when:
+    - Cache is older than TTL
+    - Cache doesn't exist
+    
+    **Override TTL**:
+    ```bash
+    # Set custom TTL (in seconds)
+    export WARDEN_SKILL_CACHE_TTL=3600  # 1 hour
+    warden run
+    ```
+    
+    **Force refresh**:
+    ```bash
+    warden skills update getsentry/sentry-skills
+    ```
+  </Accordion>
+  
+  <Accordion title="Pinned Remotes (owner/repo@sha)">
+    **TTL**: Never expires (SHA is immutable)
+    
+    Pinned remotes are cached forever. Only refetched if:
+    - Cache is manually deleted
+    - Forced via `--force` flag
+    
+    Use pinned remotes for:
+    - Production environments
+    - Reproducible CI builds
+    - Avoiding unexpected skill changes
+  </Accordion>
+</AccordionGroup>
+
+## Private Repositories
+
+For private repositories, use SSH URLs with configured SSH keys:
+
+<Steps>
+  <Step title="Set up SSH authentication">
+    ```bash
+    # Add your SSH key to GitHub
+    ssh-keygen -t ed25519 -C "your_email@example.com"
+    cat ~/.ssh/id_ed25519.pub  # Add to GitHub Settings > SSH Keys
+    ```
+  </Step>
+  
+  <Step title="Use SSH URL in config">
+    ```toml warden.toml
+    [[skills]]
+    name = "internal-security-checks"
+    remote = "git@github.com:myorg/private-skills.git"
+    ```
+  </Step>
+  
+  <Step title="Run Warden">
+    ```bash
+    warden run
+    # Authenticates via SSH key
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+HTTPS URLs for private repositories will fail in non-interactive environments (CI) because Git cannot prompt for credentials. Always use SSH URLs for private repos in CI.
+</Warning>
+
+## Remote Skill Discovery
+
+Warden discovers skills in remote repositories using two methods:
+
+### Traditional Layout
+
+Scans conventional directories:
+
+```
+remote-repo/
+├── skills/                    # Found: skills/ subdirectory
+│   ├── skill-one/
+│   │   └── SKILL.md
+│   └── skill-two/
+│       └── SKILL.md
+├── .agents/skills/            # Found: .agents/skills/
+│   └── skill-three/
+│       └── SKILL.md
+└── .claude/skills/            # Found: .claude/skills/
+    └── skill-four/
+        └── SKILL.md
+```
+
+**Search order**:
+1. Root directory
+2. `skills/`
+3. `.agents/skills/`
+4. `.claude/skills/`
+5. `.warden/skills/`
+
+First occurrence of a skill name wins.
+
+### Marketplace Format
+
+For repositories with multiple plugins:
+
+```
+remote-repo/
+├── .claude-plugin/
+│   └── marketplace.json       # Marketplace manifest
+└── plugins/
+    ├── sentry-skills/
+    │   └── skills/
+    │       ├── code-simplifier/
+    │       │   └── SKILL.md
+    │       └── find-bugs/
+    │           └── SKILL.md
+    └── security-skills/
+        └── skills/
+            └── check-xss/
+                └── SKILL.md
+```
+
+**marketplace.json**:
+```json
+{
+  "$schema": "https://skills.com/schema.json",
+  "name": "Sentry Skills Collection",
+  "plugins": [
+    {
+      "name": "sentry-skills",
+      "source": "./plugins/sentry-skills",
+      "description": "Code quality and bug detection"
+    },
+    {
+      "name": "security-skills",
+      "source": "./plugins/security-skills",
+      "description": "Security analysis"
+    }
+  ]
+}
+```
+
+Warden searches `plugins/{plugin}/skills/` for each plugin defined.
+
+## Listing Available Skills
+
+Discover what skills a remote provides:
+
+```bash
+# List skills in a remote
+warden skills list getsentry/sentry-skills
+
+Output:
+# Available skills from getsentry/sentry-skills:
+#  - code-simplifier: Simplify and refine code
+#  - find-bugs: Detect common bug patterns
+#  - security-review: Security vulnerability analysis
+```
+
+## Managing Remote Cache
+
+### Update a Remote
+
+Fetch latest changes:
+
+```bash
+# Update a specific remote
+warden skills update getsentry/sentry-skills
+
+# Update all cached remotes
+warden skills update --all
+```
+
+### Remove a Remote
+
+Delete cached repository:
+
+```bash
+warden skills remove getsentry/sentry-skills
+```
+
+### List Cached Remotes
+
+See what's cached locally:
+
+```bash
+warden skills list-cache
+
+Output:
+# Cached remotes:
+# - getsentry/sentry-skills
+#   SHA: a1b2c3d4e5f6
+#   Fetched: 2026-03-05 10:30:00 UTC
+#   Stale: No
+# 
+# - myorg/private-skills
+#   SHA: f6e5d4c3b2a1
+#   Fetched: 2026-03-01 08:15:00 UTC
+#   Stale: Yes (>24h old)
+```
+
+### Offline Mode
+
+Use only cached skills without network calls:
+
+```bash
+# Run with cached skills only
+warden run --offline
+
+# Will fail if skill is not cached
+```
+
+## Publishing Skills
+
+Share your skills with others:
+
+<Steps>
+  <Step title="Organize skills in your repo">
+    ```
+    your-repo/
+    ├── .agents/skills/
+    │   ├── your-skill-one/
+    │   │   └── SKILL.md
+    │   └── your-skill-two/
+    │       └── SKILL.md
+    └── README.md              # Document available skills
+    ```
+  </Step>
+  
+  <Step title="Document usage in README">
+    ```markdown README.md
+    # My Shared Skills
+    
+    ## Available Skills
+    
+    - **your-skill-one**: Description of what it does
+    - **your-skill-two**: Description of what it does
+    
+    ## Usage
+    
+    Add to your `warden.toml`:
+    
+    ```toml
+    [[skills]]
+    name = "your-skill-one"
+    remote = "yourorg/your-repo"
+    ```
+    ```
+  </Step>
+  
+  <Step title="Create releases (optional)">
+    Tag releases for stable versions:
+    
+    ```bash
+    git tag v1.0.0
+    git push --tags
+    ```
+    
+    Users can pin to tags:
+    ```toml
+    [[skills]]
+    name = "your-skill-one"
+    remote = "yourorg/your-repo@v1.0.0"
+    ```
+  </Step>
+</Steps>
+
+## Implementation Details
+
+### Resolution Logic
+
+From `src/skills/loader.ts:487-493`:
+
+```typescript
+export async function resolveSkillAsync(
+  nameOrPath: string,
+  repoRoot?: string,
+  options?: ResolveSkillOptions
+): Promise<SkillDefinition> {
+  // Resolution order:
+  // 1. Remote repository (if remote option is set)
+  // 2. Direct path (if nameOrPath contains / or \ or starts with .)
+  // 3. Conventional directories (if repoRoot provided)
+}
+```
+
+### Fetch Logic
+
+From `src/skills/remote.ts:318-423`:
+
+```typescript
+export async function fetchRemote(
+  ref: string,
+  options: FetchRemoteOptions = {}
+): Promise<string> {
+  // 1. Check if cache is valid
+  // 2. Clone if not cached
+  // 3. Update if stale (unpinned only)
+  // 4. Return SHA
+}
+```
+
+**Clone strategy**:
+- Shallow clone (`--depth=1`) for speed
+- Pinned SHAs: Fetch specific commit, unshallow if needed
+- Unpinned: Clone default branch, pull updates when stale
+
+### Security
+
+<Warning>
+**Path traversal protection**
+
+Warden validates remote refs to prevent:
+- Git flag injection (rejects refs starting with `-`)
+- Path traversal (sanitizes owner/repo names)
+- Malicious marketplace.json (ensures plugin paths stay within repo)
+
+From `src/skills/remote.ts:142-162`:
+```typescript
+// Security checks
+if (owner.startsWith('-') || repo.startsWith('-')) {
+  throw new SkillLoaderError('Invalid characters');
+}
+
+const safeNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+if (!safeNamePattern.test(owner) || !safeNamePattern.test(repo)) {
+  throw new SkillLoaderError('Invalid characters');
+}
+```
+</Warning>
+
+## Best Practices
+
+<Tip>
+**Pin remotes in production**
+
+Use SHA-pinned remotes in CI/production:
+
+```toml
+# Development: unpinned (get updates)
+[[skills]]
+name = "code-simplifier"
+remote = "getsentry/sentry-skills"
+
+# Production: pinned (stable)
+[[skills]]
+name = "code-simplifier"
+remote = "getsentry/sentry-skills@a1b2c3d4"
+```
+</Tip>
+
+<Note>
+**Namespace collisions**
+
+If you have a local skill with the same name as a remote skill, the local skill takes precedence (unless `remote` is explicitly specified in the config).
+</Note>
+
+## Troubleshooting
+
+### Skill Not Found
+
+```
+Error: Skill 'my-skill' not found in remote: getsentry/sentry-skills
+Available skills: code-simplifier, find-bugs
+```
+
+**Solution**: Check skill name matches exactly. List available skills:
+```bash
+warden skills list getsentry/sentry-skills
+```
+
+### Clone Failure (Private Repos)
+
+```
+Error: Failed to clone getsentry/private-skills via HTTPS.
+For private repos, use SSH URL: git@github.com:getsentry/private-skills.git
+```
+
+**Solution**: Use SSH URL with configured SSH key.
+
+### Stale Cache
+
+```
+Warning: Cached remote getsentry/sentry-skills is stale (>24h old)
+```
+
+**Solution**: Force update:
+```bash
+warden skills update getsentry/sentry-skills
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Skills" icon="hammer" href="/skills/creating-skills">
+    Write skills to share with others
+  </Card>
+  
+  <Card title="Configuration" icon="sliders" href="/essentials/configuration">
+    Configure skill triggers and paths
+  </Card>
+</CardGroup>

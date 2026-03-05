@@ -1,0 +1,373 @@
+---
+title: "warden --fix"
+description: "Apply suggested fixes automatically to resolve findings"
+---
+
+## Overview
+
+The `--fix` flag enables auto-fix mode, where Warden applies suggested fixes from findings automatically.
+
+## Usage
+
+```bash
+warden --fix [targets...] [options]
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Run analysis">
+    Warden analyzes your code and identifies issues with suggested fixes.
+  </Step>
+
+  <Step title="Review fixes">
+    In interactive mode (default), you review each fix:
+
+    ```
+    🔧 Apply fix for src/api/users.ts:45?
+    
+    Missing error handling in async function
+    
+    -  const user = await db.users.findOne({ id });
+    +  const user = await db.users.findOne({ id }).catch(err => {
+    +    console.error('Failed to fetch user:', err);
+    +    throw err;
+    +  });
+    
+    Apply this fix? (y/n/q)
+    ```
+  </Step>
+
+  <Step title="Apply patches">
+    Warden applies unified diff patches to your files.
+  </Step>
+
+  <Step title="Verify changes">
+    Review applied changes with `git diff`.
+  </Step>
+</Steps>
+
+## Options
+
+### --yes, -y
+
+Auto-apply all fixes without confirmation:
+
+```bash
+warden --fix --yes
+```
+
+<Warning>
+This applies all fixes automatically. Review changes afterward with `git diff`.
+</Warning>
+
+### --no, -n
+
+Dry run - show what would be fixed without applying:
+
+```bash
+warden --fix --no
+```
+
+### --max-findings
+
+Limit number of fixes to apply:
+
+```bash
+warden --fix --max-findings 5
+```
+
+## Interactive Mode
+
+By default, `--fix` runs interactively:
+
+```bash
+npx warden --fix
+```
+
+### Prompts
+
+For each fixable finding:
+
+```
+🔧 Apply fix for src/api/users.ts:45?
+
+Missing error handling in async function
+
+--- src/api/users.ts
++++ src/api/users.ts
+@@ -42,7 +42,10 @@
+ 
+ async function getUser(id: string) {
+-  const user = await db.users.findOne({ id });
++  const user = await db.users.findOne({ id }).catch(err => {
++    console.error('Failed to fetch user:', err);
++    throw err;
++  });
+   return user;
+ }
+
+Apply this fix? (y/n/q)
+```
+
+### Responses
+
+- **y** (yes): Apply this fix
+- **n** (no): Skip this fix
+- **q** (quit): Exit without applying more fixes
+
+## Examples
+
+### Interactive fix mode
+
+```bash
+$ npx warden --fix
+
+⚡ Warden v0.18.0
+
+🔍 Running 2 skills on 5 files...
+
+✓ code-quality: 3 findings (2 fixable)
+🔧 Found 2 fixable findings
+
+🔧 Apply fix for src/api/users.ts:45?
+
+Missing error handling
+
+--- src/api/users.ts
++++ src/api/users.ts
+@@ -42,3 +42,5 @@
+-  const user = await db.users.findOne({ id });
++  const user = await db.users.findOne({ id }).catch(err => {
++    throw new Error(`User not found: ${err.message}`);
++  });
+
+Apply this fix? (y/n/q) y
+✓ Applied fix to src/api/users.ts
+
+🔧 Apply fix for src/utils/jwt.ts:89?
+
+Weak signature algorithm
+
+--- src/utils/jwt.ts
++++ src/utils/jwt.ts
+@@ -86,2 +86,2 @@
+-  algorithm: 'HS256',
++  algorithm: 'RS256',
+
+Apply this fix? (y/n/q) y
+✓ Applied fix to src/utils/jwt.ts
+
+✓ Applied 2 fixes
+```
+
+### Auto-apply all fixes
+
+```bash
+$ npx warden --fix --yes
+
+⚡ Warden v0.18.0
+
+🔍 Running 2 skills on 5 files...
+
+✓ code-quality: 3 findings (2 fixable)
+🔧 Applying 2 fixes...
+
+✓ Applied fix to src/api/users.ts
+✓ Applied fix to src/utils/jwt.ts
+
+✓ Applied 2 fixes
+
+Review changes with:
+  git diff
+```
+
+### Fix specific files
+
+```bash
+npx warden --fix src/api/
+```
+
+### Dry run
+
+```bash
+$ npx warden --fix --no
+
+🔧 Found 2 fixable findings (dry run)
+
+  src/api/users.ts:45 - Missing error handling [medium]
+  src/utils/jwt.ts:89 - Weak signature algorithm [high]
+
+Run 'warden --fix' to apply these fixes
+```
+
+## Fix Format
+
+Fixes use unified diff format:
+
+```diff
+--- src/api/users.ts
++++ src/api/users.ts
+@@ -42,3 +42,5 @@
+ 
+ async function getUser(id: string) {
+-  const user = await db.users.findOne({ id });
++  const user = await db.users.findOne({ id }).catch(err => {
++    throw new Error(`User not found: ${err.message}`);
++  });
+   return user;
+ }
+```
+
+- Lines starting with `-` are removed
+- Lines starting with `+` are added
+- Context lines show surrounding code
+
+## Verification
+
+After applying fixes:
+
+### Review changes
+
+```bash
+git diff
+```
+
+### Test your code
+
+```bash
+npm test
+npm run build
+```
+
+### Commit changes
+
+```bash
+git add -A
+git commit -m "fix: apply Warden suggestions"
+```
+
+## Error Handling
+
+### Patch application failures
+
+If a patch fails to apply:
+
+```
+✗ Failed to apply fix to src/api/users.ts:
+  Patch does not match current file contents
+```
+
+**Causes:**
+- File was modified since analysis
+- Conflicting changes in the same area
+- File encoding issues
+
+**Solution:**
+1. Run analysis again: `npx warden --fix`
+2. Manually apply the fix
+3. Skip the fix and continue
+
+### No fixable findings
+
+```
+🔍 No fixable findings
+```
+
+Not all findings have suggested fixes. Skills must explicitly provide fix diffs.
+
+## Tips
+
+<AccordionGroup>
+  <Accordion title="Review fixes before committing">
+    Always review with `git diff` before committing:
+
+    ```bash
+    npx warden --fix
+    git diff
+    npm test
+    git commit -am "fix: apply Warden suggestions"
+    ```
+  </Accordion>
+
+  <Accordion title="Apply fixes incrementally">
+    Fix high-severity issues first:
+
+    ```bash
+    # Fix high severity only
+    npx warden --fix --fail-on high
+
+    # Then fix medium
+    npx warden --fix --fail-on medium
+    ```
+  </Accordion>
+
+  <Accordion title="Combine with targets">
+    Fix specific areas:
+
+    ```bash
+    # Fix only API files
+    npx warden --fix src/api/
+
+    # Fix specific file
+    npx warden --fix src/api/users.ts
+    ```
+  </Accordion>
+
+  <Accordion title="Use in CI with caution">
+    Auto-fixing in CI requires careful consideration:
+
+    ```yaml
+    # Create fix PR automatically
+    - name: Apply fixes
+      run: npx warden --fix --yes
+      if: github.event_name == 'schedule'
+
+    - name: Create PR
+      run: |
+        git checkout -b warden-fixes-$(date +%s)
+        git commit -am "fix: apply Warden suggestions"
+        gh pr create --title "Warden fixes" --body "Auto-generated fixes"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Limitations
+
+### Not all findings are fixable
+
+Skills must explicitly provide fix diffs. Some issues require human judgment:
+
+- Architectural changes
+- Logic errors
+- Complex refactorings
+
+### Fixes may conflict
+
+Multiple fixes to the same area may conflict. Review carefully.
+
+### Test after fixing
+
+Auto-fixes don't guarantee correctness. Always test:
+
+```bash
+npx warden --fix --yes
+npm test
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Main command" icon="terminal" href="/cli/analyze">
+    Analyze without fixing
+  </Card>
+  <Card title="Findings" icon="magnifying-glass" href="/concepts/findings">
+    Understanding finding structure
+  </Card>
+  <Card title="Creating skills" icon="wand-magic-sparkles" href="/skills/creating-skills">
+    Add suggested fixes to your skills
+  </Card>
+  <Card title="Output formats" icon="file-code" href="/advanced/output-formats">
+    JSONL format includes fix diffs
+  </Card>
+</CardGroup>

@@ -1,0 +1,440 @@
+---
+title: renderSkillReport()
+description: Format skill findings as GitHub reviews and markdown comments
+---
+
+The `renderSkillReport()` function formats skill findings for GitHub PR reviews and check run summaries.
+
+## Function Signature
+
+```typescript
+function renderSkillReport(
+  report: SkillReport,
+  options?: RenderOptions
+): RenderResult
+```
+
+<ParamField path="report" type="SkillReport" required>
+  Skill report from [`runSkill()`](/api/run-skill).
+</ParamField>
+
+<ParamField path="options" type="RenderOptions">
+  Rendering options (see below).
+</ParamField>
+
+## RenderOptions
+
+Control output formatting and filtering:
+
+<ParamField path="reportOn" type="SeverityThreshold">
+  Only include findings at or above this severity:
+  - `'high'` - Only high severity
+  - `'medium'` - Medium and high
+  - `'low'` - All findings (default)
+  - `'off'` - No findings (empty output)
+  
+  ```typescript
+  renderSkillReport(report, { reportOn: 'high' });
+  // Only high severity findings appear in output
+  ```
+</ParamField>
+
+<ParamField path="minConfidence" type="ConfidenceThreshold">
+  Only include findings at or above this confidence level:
+  - `'high'` - Only high confidence
+  - `'medium'` - Medium and high
+  - `'low'` - All findings (default)
+  - `'off'` - No filtering
+  
+  ```typescript
+  renderSkillReport(report, { minConfidence: 'high' });
+  // Only high-confidence findings appear
+  ```
+</ParamField>
+
+<ParamField path="failOn" type="SeverityThreshold">
+  Severity threshold for determining review event type (`REQUEST_CHANGES` vs `COMMENT`).
+  
+  ```typescript
+  renderSkillReport(report, { 
+    failOn: 'high',
+    requestChanges: true,
+  });
+  // Uses REQUEST_CHANGES if any high severity findings exist
+  ```
+</ParamField>
+
+<ParamField path="requestChanges" type="boolean" default="false">
+  Whether to use `REQUEST_CHANGES` review event when `failOn` threshold is met.
+  
+  If `false`, always uses `COMMENT` event (non-blocking).
+</ParamField>
+
+<ParamField path="maxFindings" type="number">
+  Limit the number of findings in the output. Remaining findings are linked via `checkRunUrl`.
+  
+  ```typescript
+  renderSkillReport(report, { 
+    maxFindings: 10,
+    checkRunUrl: 'https://github.com/owner/repo/runs/123',
+  });
+  // Shows first 10 findings + link to full report
+  ```
+</ParamField>
+
+<ParamField path="includeSuggestions" type="boolean" default="true">
+  Include suggested fixes as GitHub suggestion blocks:
+  
+  ```suggestion
+  // Fixed code here
+  ```
+</ParamField>
+
+<ParamField path="groupByFile" type="boolean" default="true">
+  Group findings by file in summary comment.
+</ParamField>
+
+<ParamField path="checkRunUrl" type="string">
+  URL to GitHub Check run containing full report. Used when `maxFindings` limits output.
+</ParamField>
+
+<ParamField path="totalFindings" type="number">
+  Total number of findings before filtering. Used to show "X more findings" link.
+</ParamField>
+
+<ParamField path="allFindings" type="Finding[]">
+  Original findings for `failOn` evaluation. Use when `report.findings` has been modified (e.g., deduplicated).
+</ParamField>
+
+## Return Value
+
+<ResponseField name="RenderResult" type="object">
+  Formatted output for GitHub:
+  
+  ```typescript
+  interface RenderResult {
+    review?: GitHubReview;
+    summaryComment: string;
+  }
+  ```
+</ResponseField>
+
+### GitHubReview
+
+<ResponseField name="review" type="GitHubReview | undefined">
+  PR review with inline comments. `undefined` if:
+  - No findings with location
+  - `reportOn === 'off'`
+  - All findings filtered out
+  
+  ```typescript
+  interface GitHubReview {
+    event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+    body: string;
+    comments: GitHubComment[];
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="event" type="'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'">
+  Review event type:
+  - `REQUEST_CHANGES` - When `failOn` threshold met and `requestChanges=true`
+  - `COMMENT` - Default (non-blocking)
+  - `APPROVE` - Never used (dismissal handled separately)
+</ResponseField>
+
+<ResponseField name="body" type="string">
+  Review body text. Contains:
+  - Findings without location (general issues)
+  - Fallback message for `REQUEST_CHANGES` when all findings below `reportOn`
+</ResponseField>
+
+<ResponseField name="comments" type="GitHubComment[]">
+  Inline review comments:
+  
+  ```typescript
+  interface GitHubComment {
+    body: string;              // Markdown content
+    path: string;              // File path
+    line: number;              // End line
+    side: 'RIGHT';             // Always RIGHT for PR head
+    start_line?: number;       // Start line (if multi-line)
+    start_side?: 'RIGHT';      // Always RIGHT
+  }
+  ```
+</ResponseField>
+
+### Summary Comment
+
+<ResponseField name="summaryComment" type="string">
+  Markdown comment for Check run or PR summary. Includes:
+  - Skill name header
+  - Summary text
+  - Severity counts table
+  - Grouped/flat findings list
+  - Link to full report (if findings hidden)
+  - Cost and timing stats footer
+</ResponseField>
+
+## Example: Basic Usage
+
+```typescript
+import { runSkill, renderSkillReport } from '@sentry/warden';
+
+const report = await runSkill(skill, context, options);
+
+const { review, summaryComment } = renderSkillReport(report, {
+  reportOn: 'medium',
+  failOn: 'high',
+  requestChanges: true,
+  includeSuggestions: true,
+});
+
+if (review) {
+  console.log(`Review event: ${review.event}`);
+  console.log(`Inline comments: ${review.comments.length}`);
+}
+
+console.log('\nSummary:\n', summaryComment);
+```
+
+## Example: Post to GitHub
+
+```typescript
+import { Octokit } from '@octokit/rest';
+import { runSkill, renderSkillReport } from '@sentry/warden';
+
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+const { owner, repo, number } = pullRequest;
+
+const report = await runSkill(skill, context, options);
+
+const { review, summaryComment } = renderSkillReport(report, {
+  reportOn: trigger.reportOn,
+  failOn: trigger.failOn,
+  requestChanges: trigger.requestChanges,
+  maxFindings: trigger.maxFindings,
+});
+
+// Post PR review
+if (review && review.comments.length > 0) {
+  await octokit.pulls.createReview({
+    owner,
+    repo,
+    pull_number: number,
+    event: review.event,
+    body: review.body,
+    comments: review.comments,
+  });
+}
+
+// Post summary comment
+await octokit.issues.createComment({
+  owner,
+  repo,
+  issue_number: number,
+  body: summaryComment,
+});
+```
+
+## Example: With maxFindings
+
+```typescript
+const checkRunUrl = `https://github.com/${owner}/${repo}/runs/${runId}`;
+
+const { review, summaryComment } = renderSkillReport(report, {
+  maxFindings: 10,
+  checkRunUrl,
+  totalFindings: report.findings.length,
+});
+
+// Summary includes: "View 25 additional findings in Checks"
+```
+
+## Comment Format
+
+### Inline Comment Structure
+
+Each inline comment includes:
+
+````markdown
+**SQL Injection Vulnerability**
+
+User input is concatenated into SQL query without sanitization.
+
+\`\`\`suggestion
+const result = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+\`\`\`
+
+**Also found at 2 additional locations:**
+- `src/api/posts.ts:45-47`
+- `src/api/comments.ts:23`
+
+Identified by Warden `security-review` · `abc123`
+````
+
+### Summary Comment Structure
+
+```markdown
+## security-review
+
+Found 3 issues (2 high, 1 medium)
+
+### Summary
+
+| Severity | Count |
+|----------|-------|
+| High     | 2     |
+| Medium   | 1     |
+
+### Findings
+
+#### `src/api/users.ts`
+
+- `abc123` **SQL Injection Vulnerability** (L34-36) · high: User input is concatenated...
+- `def456` **Missing Authentication Check** (L12) · high: Endpoint allows unauthenticated...
+
+#### `src/api/posts.ts`
+
+- `ghi789` **Rate Limit Bypass** (L45) · medium: Rate limiting can be circumvented...
+
+---
+<sub>3 findings · $0.0123 · 12.3s · 15.2k tokens (3.1k cached)</sub>
+```
+
+## Review Event Logic
+
+The review event is determined by `failOn` and `requestChanges`:
+
+```typescript
+function determineReviewEvent(
+  findings: Finding[],
+  failOn?: SeverityThreshold,
+  requestChanges?: boolean
+): 'REQUEST_CHANGES' | 'COMMENT' {
+  if (!requestChanges) return 'COMMENT';
+  
+  const hasBlockingFinding = failOn && failOn !== 'off' &&
+    findings.some(f => SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER[failOn]);
+  
+  return hasBlockingFinding ? 'REQUEST_CHANGES' : 'COMMENT';
+}
+```
+
+### Examples
+
+```typescript
+// Non-blocking (default)
+renderSkillReport(report, { failOn: 'high' });
+// → event: 'COMMENT' (requestChanges defaults to false)
+
+// Blocking on high severity
+renderSkillReport(report, { 
+  failOn: 'high',
+  requestChanges: true,
+});
+// → event: 'REQUEST_CHANGES' if any high findings exist
+
+// Disabled
+renderSkillReport(report, { failOn: 'off' });
+// → event: 'COMMENT' (failOn='off' disables blocking)
+```
+
+## Filtering Logic
+
+Findings are filtered in this order:
+
+1. **Severity filtering** (`reportOn`) - Only include findings at/above threshold
+2. **Confidence filtering** (`minConfidence`) - Only include high-confidence findings
+3. **Limit** (`maxFindings`) - Truncate to max count
+
+```typescript
+// Apply reportOn + minConfidence
+const filtered = filterFindings(
+  report.findings,
+  options.reportOn,
+  options.minConfidence
+);
+
+// Apply maxFindings limit
+const limited = options.maxFindings 
+  ? filtered.slice(0, options.maxFindings)
+  : filtered;
+
+// Hidden count for "X more findings" link
+const hiddenCount = report.findings.length - limited.length;
+```
+
+<Note>
+  The `failOn` threshold is **always** evaluated against the **original** findings (or `allFindings` if provided), ensuring that blocking behavior isn't affected by `reportOn` or deduplication.
+</Note>
+
+## Deduplication Markers
+
+Each inline comment includes a hidden HTML marker for deduplication across workflow runs:
+
+```markdown
+<!-- warden:findingId:path:line:contentHash -->
+```
+
+This allows Warden to:
+- Detect duplicate comments from previous runs
+- Update existing comments instead of creating new ones
+- Clean up stale comments when findings are resolved
+
+## Cost Footer
+
+The summary includes a compact stats footer:
+
+```
+3 findings · $0.0123 · 12.3s · 15.2k tokens (3.1k cached)
+```
+
+Components:
+- Finding count
+- Total cost in USD
+- Duration in seconds
+- Token usage (input + output, with cache hits)
+
+## Edge Cases
+
+### No Findings
+
+```typescript
+const { review, summaryComment } = renderSkillReport(report);
+// review: undefined
+// summaryComment: "## skill-name\n\nNo issues found\n\n---\n<sub>stats</sub>"
+```
+
+### Findings Without Location
+
+General findings (no file/line) appear in review body:
+
+```typescript
+const finding = {
+  title: 'Missing Rate Limiting',
+  description: 'API lacks global rate limiting',
+  // no location
+};
+
+// Appears in review.body, not review.comments
+```
+
+### Mixed Findings
+
+Locationless findings go in review body, located findings in comments:
+
+```typescript
+const { review } = renderSkillReport(report);
+
+if (review) {
+  console.log('General issues:', review.body);          // Locationless
+  console.log('Inline comments:', review.comments);     // Located
+}
+```
+
+## Related Functions
+
+- [`runSkill()`](/api/run-skill) - Generate skill reports
+- [`filterFindings()`](/api/run-skill) - Filter findings by severity/confidence
+- [`shouldFail()`](/api/trigger-matching#shouldfail) - Check blocking status

@@ -1,0 +1,404 @@
+---
+title: 'Skill Structure'
+description: 'SKILL.md format, directory structure, and conventions'
+---
+
+## File Format
+
+Skills use markdown files with YAML frontmatter following the [agentskills.io](https://agentskills.io) specification:
+
+```markdown
+---
+name: skill-name
+description: Brief description for discovery and trigger matching.
+allowed-tools: Read Grep Glob
+---
+
+[Prompt body - the actual instructions for Claude]
+```
+
+## Directory Structure
+
+Warden discovers skills from conventional directories:
+
+<CodeGroup>
+```bash Preferred format
+.agents/skills/
+└── skill-name/
+    ├── SKILL.md          # Main skill definition
+    └── references/       # Optional: supporting docs
+        └── patterns.md
+```
+
+```bash Flat format
+.agents/skills/
+└── skill-name.md         # Flat file with frontmatter
+```
+</CodeGroup>
+
+### Discovery Priority
+
+Warden searches directories in order (first match wins):
+
+1. `.agents/skills/` — Primary (recommended)
+2. `.claude/skills/` — Claude Code convention
+3. `.warden/skills/` — Legacy
+
+Within each directory, directory-format skills (with `SKILL.md`) take precedence over flat `.md` files.
+
+## Frontmatter Fields
+
+### Required Fields
+
+<ParamField path="name" type="string" required>
+  Unique identifier for the skill. Use lowercase with hyphens: `find-auth-bugs`, `security-review`
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  One-line description explaining when to use this skill. Used for skill discovery and documentation.
+  
+  Examples:
+  - `"Detect SQL injection vulnerabilities from improper query construction"`
+  - `"Find race conditions in concurrent code"`
+  - `"Warden-specific bug detection from historical patterns"`
+</ParamField>
+
+### Optional Fields
+
+<ParamField path="allowed-tools" type="string">
+  Space-delimited list of tool names the skill can use. Typically `Read Grep Glob` for code analysis skills.
+  
+  Available tools:
+  - `Read` — Read files from the repository
+  - `Grep` — Search file contents with regex
+  - `Glob` — Find files by pattern
+  - `Bash` — Execute shell commands (use cautiously)
+  - `Edit` — Modify files (for auto-fix skills)
+  - `Write` — Create new files
+  
+  Most analysis skills only need `Read Grep Glob`.
+</ParamField>
+
+<ParamField path="metadata" type="object">
+  Custom metadata for skill organization. Not used by Warden core but available for extensions.
+  
+  Example:
+  ```yaml
+  metadata:
+    category: security
+    author: team-security
+    version: 2.0
+  ```
+</ParamField>
+
+## Prompt Body Structure
+
+The markdown body after frontmatter contains the instructions for Claude. Effective skills follow this structure:
+
+### 1. Role Statement
+
+Set the agent's persona and expertise:
+
+```markdown
+You are an expert bug hunter who knows Warden's architecture intimately.
+You detect bugs that recur at Warden's known architectural seams.
+```
+
+### 2. Scope Definition
+
+Explain what the agent receives and how to approach it:
+
+```markdown
+## Scope
+
+You receive scoped code chunks from Warden's diff pipeline. Analyze each
+chunk against the checks below. Only report findings you can prove from the code.
+```
+
+### 3. Checks / Analysis Criteria
+
+The core of the skill—specific patterns to detect:
+
+```markdown
+## Checks
+
+### Check 1: SQL Injection
+
+**Red flags:**
+- String concatenation building SQL: `"SELECT * FROM users WHERE id = " + userId`
+- Template literals with user input: `SELECT * FROM ${table}`
+
+**Safe patterns:**
+- Parameterized queries: `db.query('SELECT * FROM users WHERE id = ?', [userId])`
+- Query builders: `knex('users').where('id', userId)`
+
+**Not a bug:**
+- Hardcoded SQL strings without user input
+- SQL in comments or logging
+
+---
+
+### Check 2: [Next Check]
+...
+```
+
+### 4. Confidence Calibration
+
+Set reporting thresholds:
+
+```markdown
+## Confidence Calibration
+
+| Level | Criteria | Action |
+|-------|----------|--------|
+| HIGH | Pattern traced to specific code, confirmed triggerable | Report |
+| MEDIUM | Pattern present, context may mitigate | Read more, then decide |
+| LOW | Vague resemblance | Do NOT report |
+
+When in doubt, read more files. Never guess.
+```
+
+### 5. Report Format
+
+Guide the output structure:
+
+```markdown
+## Report Format
+
+For each finding:
+- File path and line number
+- Which check it matches
+- One sentence: what is wrong
+- Why it matters (trigger condition)
+- Suggested fix (if obvious)
+
+### Zero findings
+
+If no checks fire, report nothing. Silence means the code is clean.
+```
+
+### 6. Severity Levels
+
+Define severity tied to impact:
+
+```markdown
+## Severity Levels
+
+- **critical**: Crash, data loss, or security breach in normal usage
+- **high**: Incorrect behavior in common scenarios
+- **medium**: Incorrect behavior in edge cases
+- **low**: Minor issues or style concerns
+
+Do NOT report low severity. If confidence is that low, don't report it.
+```
+
+## Reference Files
+
+For complex skills, split knowledge into reference files:
+
+```
+.agents/skills/agent-prompt/
+├── SKILL.md                      # Main entry point
+└── references/                   # Supporting documentation
+    ├── core-principles.md        # Foundational rules
+    ├── agentic-patterns.md       # Tool-using patterns
+    ├── anti-patterns.md          # What to avoid
+    └── context-design.md         # Research notes
+```
+
+Reference files from the main skill:
+
+```markdown SKILL.md
+## Reference Documents
+
+Read the relevant reference files based on the user's question:
+
+| Document | Use When |
+|----------|----------|
+| `references/core-principles.md` | Writing any prompt |
+| `references/agentic-patterns.md` | Building tool-using agents |
+| `references/anti-patterns.md` | Reviewing for mistakes |
+```
+
+## Skill Resolution
+
+Warden resolves skill names to file paths using this priority:
+
+<Steps>
+  <Step title="Remote repository (if specified)">
+    ```toml
+    [[skills]]
+    name = "code-simplifier"
+    remote = "getsentry/sentry-skills"
+    ```
+    
+    Loads from cached remote repo at `~/.local/warden/skills/getsentry/sentry-skills/`
+  </Step>
+  
+  <Step title="Direct path (if name contains / or starts with .)">
+    ```toml
+    [[skills]]
+    name = "./custom/my-skill.md"
+    ```
+    
+    Loads directly from the specified path
+  </Step>
+  
+  <Step title="Conventional directories">
+    Searches in order:
+    1. `.agents/skills/{name}/SKILL.md`
+    2. `.agents/skills/{name}.md`
+    3. `.claude/skills/{name}/SKILL.md`
+    4. `.claude/skills/{name}.md`
+    5. `.warden/skills/{name}/SKILL.md`
+    6. `.warden/skills/{name}.md`
+  </Step>
+</Steps>
+
+## Naming Conventions
+
+### Skill Names
+
+- **Lowercase with hyphens**: `find-race-conditions`, `check-sql-injection`
+- **Action-oriented**: Describes what the skill does
+- **Specific**: Avoid generic names like `code-quality` or `best-practices`
+
+Examples:
+```
+✅ find-warden-bugs
+✅ check-sql-injection
+✅ detect-race-conditions
+✅ architecture-review
+
+❌ bugs
+❌ security
+❌ code-quality
+❌ linter
+```
+
+### File Names
+
+- **Directory format**: `skill-name/SKILL.md` (preferred)
+- **Flat format**: `skill-name.md` (simpler, single file)
+- **Reference files**: Lowercase with hyphens, `.md` extension
+
+## rootDir Context
+
+When Warden loads a skill, it sets the `rootDir` property to the directory containing `SKILL.md`. This allows reference files to be resolved relative to the skill:
+
+```typescript
+// Internal loader behavior
+const skill = await loadSkillFromMarkdown(skillPath);
+// skill.rootDir === dirname(skillPath)
+// References in references/ are relative to rootDir
+```
+
+This enables skills to bundle supporting documentation and have it automatically discoverable.
+
+## Validation
+
+Warden validates skills at load time:
+
+- **Frontmatter syntax**: Must be valid YAML between `---` delimiters
+- **Required fields**: `name` and `description` must be present
+- **Tool names**: Must match allowed tools (warns on invalid, doesn't fail)
+- **Name format**: Letters, numbers, hyphens only
+
+Invalid skills are skipped with a warning during discovery.
+
+## Example: Complete Skill
+
+Here's a complete example with all best practices:
+
+```markdown .agents/skills/check-sql-injection/SKILL.md
+---
+name: check-sql-injection
+description: "Detect SQL injection vulnerabilities from improper query construction"
+allowed-tools: Read Grep Glob
+metadata:
+  category: security
+  severity: critical
+---
+
+You are a security-focused code reviewer specialized in SQL injection detection.
+
+## Scope
+
+Analyze code for SQL injection vulnerabilities. Focus on database query construction.
+You receive code chunks from diffs—analyze each against the check below.
+
+## Check: SQL Injection via String Concatenation
+
+**Red flags:**
+- String concatenation building SQL with user input: `query = "SELECT * FROM users WHERE id = " + userId`
+- Template literals interpolating variables: `query = `SELECT * FROM ${table} WHERE id = ${id}``
+- `.format()` or f-strings building SQL
+- User-controlled values in WHERE/ORDER BY/LIMIT without parameterization
+
+**Safe patterns:**
+- Parameterized queries: `db.query('SELECT * FROM users WHERE id = ?', [userId])`
+- ORM methods: `User.findOne({ id: userId })`
+- Query builders: `knex('users').where('id', userId)`
+- Hardcoded SQL strings (no user input)
+
+**Not a bug:**
+- Concatenation of hardcoded SQL fragments (table/column names from constants)
+- SQL in logging or error messages (not executed)
+- SQL in comments or documentation
+
+## Confidence Calibration
+
+| Level | Criteria | Action |
+|-------|----------|--------|
+| HIGH | User input flows directly into concatenated SQL | Report as critical |
+| MEDIUM | Indirect flow or partial sanitization | Report as high |
+| LOW | No user input or fully parameterized | Do not report |
+
+Read more context if the data flow is unclear.
+
+## Report Format
+
+For each vulnerability:
+- File path and line number
+- The vulnerable code line
+- What user input flows into the query (trace the variable)
+- Why parameterization is needed (explain the attack vector)
+- How to fix (show parameterized version)
+
+### Zero findings
+
+If no vulnerabilities found, report nothing.
+
+## Severity Levels
+
+- **critical**: User input directly concatenated into executed SQL
+- **high**: Indirect flow without proper validation
+- **medium**: Sanitization present but insufficient (blocklist-based, etc.)
+```
+
+## Best Practices Summary
+
+<Tip>
+**Structure your skills for clarity:**
+
+1. Start with a clear role statement
+2. Define scope and input expectations
+3. Use check-based structure with concrete examples
+4. Include "safe patterns" and "not a bug" sections
+5. Calibrate confidence thresholds
+6. Define severity tied to real impact
+7. Guide the report format
+8. Explicitly handle zero findings
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Skills" icon="hammer" href="/skills/creating-skills">
+    Step-by-step guide to writing your first skill
+  </Card>
+  
+  <Card title="Builtin Skills" icon="books" href="/skills/builtin-skills">
+    Study real examples from Warden
+  </Card>
+</CardGroup>

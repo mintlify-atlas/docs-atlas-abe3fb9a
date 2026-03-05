@@ -1,0 +1,421 @@
+---
+title: 'warden logs'
+description: 'View and manage saved analysis run logs'
+---
+
+# warden logs
+
+View, replay, and manage saved Warden analysis logs. Logs are automatically saved to `.warden/logs/` in JSONL format.
+
+## Usage
+
+```bash
+# List all saved runs
+warden logs
+warden logs list
+
+# Show results from specific log file
+warden logs show <file.jsonl>
+warden logs show <run-id>
+
+# Clean up expired logs
+warden logs gc
+```
+
+## Subcommands
+
+### list (default)
+
+List all saved analysis runs with summary information.
+
+```bash
+warden logs
+warden logs list
+```
+
+**Output columns:**
+- **RUN** - Short run ID (first 8 characters)
+- **DATE** - Relative timestamp (e.g., "2h ago", "yesterday")
+- **FILES** - Number of files analyzed
+- **FINDINGS** - Severity breakdown (high / medium / low)
+- **TIME** - Analysis duration
+- **COST** - API costs in USD
+- **SHA** - Git commit SHA (first 7 characters)
+- **MODEL** - Claude model used
+- **SKILLS** - Skills executed in the run
+
+Example:
+
+```bash
+$ warden logs
+
+  RUN       DATE        FILES  FINDINGS      TIME      COST    SHA      MODEL              SKILLS
+  a1b2c3d4  2h ago         12  0 / 3 / 1     45s       $0.12   abc1234  claude-sonnet-4.5  security-review, bug-detection
+  e5f6g7h8  yesterday      8   2 / 1 / 0     32s       $0.08   def5678  claude-sonnet-4.5  security-review
+  i9j0k1l2  2d ago        15   0 / 0 / 5     1m 12s    $0.19   ghi9012  claude-sonnet-4.5  bug-detection, code-quality
+
+3 runs  ·  14 findings  0 / 4 / 6  ·  1m 49s  ·  $0.39  ·  3 skills
+```
+
+### show
+
+Display full results from one or more saved log files.
+
+```bash
+# By file path
+warden logs show .warden/logs/run-20260305-143022.jsonl
+
+# By run ID (short or full)
+warden logs show a1b2c3d4
+warden logs show a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+# Multiple files
+warden logs show run1.jsonl run2.jsonl
+
+# With filtering
+warden logs show a1b2c3d4 --report-on high
+warden logs show a1b2c3d4 --min-confidence high
+```
+
+The `show` subcommand is optional when the first argument looks like a file or run ID:
+
+```bash
+# These are equivalent
+warden logs show a1b2c3d4
+warden logs a1b2c3d4
+```
+
+### gc
+
+Garbage collect (remove) expired log files based on retention policy.
+
+```bash
+warden logs gc
+```
+
+Retention period is configured in `warden.toml` (default: 30 days):
+
+```toml
+[logs]
+retentionDays = 30
+```
+
+## Options
+
+### For list
+
+<ParamField path="--json" type="boolean" default="false">
+  Output log list as JSON array
+  
+  ```bash
+  warden logs list --json
+  ```
+</ParamField>
+
+### For show
+
+<ParamField path="--json" type="boolean" default="false">
+  Output results in JSON format
+  
+  ```bash
+  warden logs show a1b2c3d4 --json
+  ```
+</ParamField>
+
+<ParamField path="--report-on" type="string">
+  Filter results to show only findings at or above severity
+  
+  **Values:** `off`, `critical`, `high`, `medium`, `low`, `info`
+  
+  ```bash
+  warden logs show a1b2c3d4 --report-on high
+  ```
+</ParamField>
+
+<ParamField path="--min-confidence" type="string">
+  Filter results to show only findings at or above confidence level
+  
+  **Values:** `off`, `high`, `medium`, `low`
+  
+  ```bash
+  warden logs show a1b2c3d4 --min-confidence high
+  ```
+</ParamField>
+
+<ParamField path="-v, --verbose" type="flag">
+  Show detailed skill execution information
+  
+  ```bash
+  warden logs show a1b2c3d4 -v
+  ```
+</ParamField>
+
+<ParamField path="--debug" type="boolean" default="false">
+  Show debug information including token counts and latencies
+  
+  ```bash
+  warden logs show a1b2c3d4 --debug
+  ```
+</ParamField>
+
+### Global Options
+
+<ParamField path="--quiet" type="boolean" default="false">
+  Suppress non-error output
+  
+  ```bash
+  warden logs gc --quiet
+  ```
+</ParamField>
+
+<ParamField path="--color / --no-color" type="boolean">
+  Force color output on or off
+  
+  ```bash
+  warden logs --no-color
+  ```
+</ParamField>
+
+## Log File Format
+
+Log files are saved in JSONL (JSON Lines) format at `.warden/logs/`:
+
+```
+.warden/logs/
+├── run-20260305-143022-a1b2c3d4.jsonl
+├── run-20260305-150145-e5f6g7h8.jsonl
+└── run-20260304-091233-i9j0k1l2.jsonl
+```
+
+### Filename Format
+
+```
+run-<timestamp>-<short-run-id>.jsonl
+```
+
+- **timestamp**: `YYYYMMDD-HHMMSS` in local time
+- **short-run-id**: First 8 characters of UUID
+
+### JSONL Structure
+
+Each line is a JSON object. First line contains run metadata:
+
+```json
+{
+  "_meta": {
+    "run": {
+      "runId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "traceId": "trace-xyz",
+      "timestamp": "2026-03-05T14:30:22.000Z",
+      "durationMs": 45123
+    },
+    "model": "claude-sonnet-4.5",
+    "headSha": "abc1234def5678",
+    "cwd": "/home/user/project"
+  }
+}
+```
+
+Subsequent lines contain skill reports:
+
+```json
+{
+  "skill": "security-review",
+  "trigger": {"type": "pull_request"},
+  "findings": [...],
+  "durationMs": 12345,
+  "usage": {
+    "inputTokens": 1000,
+    "outputTokens": 500,
+    "cacheCreationTokens": 800,
+    "cacheReadTokens": 200,
+    "costUSD": 0.05
+  }
+}
+```
+
+Final line contains summary:
+
+```json
+{
+  "_summary": {
+    "totalFindings": 4,
+    "bySeverity": {"high": 2, "medium": 1, "low": 1},
+    "run": {...},
+    "usage": {...}
+  }
+}
+```
+
+## Exit Codes
+
+<ResponseField name="0" type="Success">
+  - Logs listed successfully
+  - Results displayed successfully
+  - Garbage collection completed
+</ResponseField>
+
+<ResponseField name="1" type="Error">
+  - Not in a git repository
+  - Log file not found
+  - Failed to parse log file
+  - Invalid arguments
+</ResponseField>
+
+## Examples
+
+### View Recent Runs
+
+```bash
+# List all runs
+warden logs
+
+# Show most recent run
+warden logs show $(warden logs --json | jq -r '.[0].file')
+```
+
+### Filter Results
+
+```bash
+# Show only high severity findings
+warden logs show a1b2c3d4 --report-on high
+
+# Show only high confidence findings
+warden logs show a1b2c3d4 --min-confidence high
+
+# Combine filters
+warden logs show a1b2c3d4 --report-on high --min-confidence high
+```
+
+### Export to JSON
+
+```bash
+# Export log list
+warden logs --json > logs-summary.json
+
+# Export specific run
+warden logs show a1b2c3d4 --json > run-results.json
+```
+
+### Compare Runs
+
+```bash
+# Show two runs side by side
+warden logs show run1.jsonl > /tmp/run1.txt
+warden logs show run2.jsonl > /tmp/run2.txt
+diff /tmp/run1.txt /tmp/run2.txt
+```
+
+### Clean Up Old Logs
+
+```bash
+# Remove logs older than retention period
+warden logs gc
+
+# See what will be removed (dry run)
+find .warden/logs -name "*.jsonl" -mtime +30
+```
+
+### CI/CD Integration
+
+```bash
+# Save run for archival
+warden -o build-${CI_COMMIT_SHA}.jsonl
+
+# Replay in later job
+warden logs show build-${CI_COMMIT_SHA}.jsonl --json
+```
+
+## Automatic Logging
+
+Logs are automatically created when Warden runs successfully:
+
+```bash
+# This creates .warden/logs/run-<timestamp>-<id>.jsonl
+warden
+
+# Explicit output path (doesn't auto-save to .warden/logs/)
+warden -o custom.jsonl
+```
+
+Disable auto-logging by setting in `warden.toml`:
+
+```toml
+[logs]
+enabled = false
+```
+
+## Log Retention
+
+Configure retention in `warden.toml`:
+
+```toml
+[logs]
+retentionDays = 30  # Default
+```
+
+Run `warden logs gc` periodically (e.g., in cron or CI) to clean up:
+
+```bash
+# In CI before analysis
+warden logs gc
+warden
+```
+
+GC is also run automatically before new analysis runs (non-blocking).
+
+## Use Cases
+
+### Debug Past Runs
+
+```bash
+# List recent runs
+warden logs
+
+# Replay with verbose output
+warden logs show a1b2c3d4 -vv
+```
+
+### Share Results
+
+```bash
+# Generate shareable report
+warden logs show a1b2c3d4 > findings.txt
+
+# Or as JSON for processing
+warden logs show a1b2c3d4 --json > findings.json
+```
+
+### Compare Before/After
+
+```bash
+# Run before changes
+warden
+# Note the run ID
+
+# Make changes
+git commit -am "Fix security issues"
+
+# Run again
+warden
+
+# Compare
+warden logs show <before-id> --report-on high > before.txt
+warden logs show <after-id> --report-on high > after.txt
+diff before.txt after.txt
+```
+
+### Cost Tracking
+
+```bash
+# View costs over time
+warden logs --json | jq '.[] | {date: .timestamp, cost: .costUSD}'
+
+# Total cost last 30 days
+warden logs --json | jq '[.[] | .costUSD] | add'
+```
+
+## Related Commands
+
+- [warden](/api/cli/warden) - Run analysis (creates logs)
+- [warden sync](/api/cli/sync) - Update remote skills

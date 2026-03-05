@@ -1,0 +1,210 @@
+---
+title: Library API Overview
+description: Use Warden programmatically as a library in your Node.js applications
+---
+
+Warden exposes a clean TypeScript API for programmatic code analysis. Import it as a library to run skills, build event contexts, match triggers, and render reports.
+
+## Installation
+
+```bash
+npm install @sentry/warden
+```
+
+## Core Workflow
+
+The typical workflow for using Warden programmatically:
+
+1. **Load configuration** - Parse `warden.toml` and resolve skill configs
+2. **Build event context** - Create an EventContext from GitHub events or local files
+3. **Match triggers** - Determine which skills should run for the given context
+4. **Run skills** - Execute Claude-powered analysis on code changes
+5. **Render output** - Format findings as GitHub reviews or markdown
+
+```typescript
+import { 
+  loadWardenConfig,
+  resolveSkillConfigs,
+  buildEventContext,
+  matchTrigger,
+  runSkill,
+  renderSkillReport 
+} from '@sentry/warden';
+
+// 1. Load config
+const config = loadWardenConfig('/path/to/repo');
+const triggers = resolveSkillConfigs(config);
+
+// 2. Build context from GitHub webhook
+const context = await buildEventContext(
+  'pull_request',
+  eventPayload,
+  '/path/to/repo',
+  octokit
+);
+
+// 3. Match triggers
+const matchedTriggers = triggers.filter(t => 
+  matchTrigger(t, context, 'github')
+);
+
+// 4. Run analysis
+for (const trigger of matchedTriggers) {
+  const skill = await resolveSkillAsync(trigger.name, '/path/to/repo');
+  const report = await runSkill(skill, context, {
+    apiKey: process.env.WARDEN_ANTHROPIC_API_KEY,
+    model: trigger.model,
+  });
+  
+  // 5. Render output
+  const { review, summaryComment } = renderSkillReport(report, {
+    reportOn: trigger.reportOn,
+    failOn: trigger.failOn,
+  });
+}
+```
+
+## API Reference
+
+The library exports are organized into functional domains:
+
+### Core Execution
+
+- [`runSkill()`](/api/run-skill) - Execute a skill on code changes
+- [`analyzeFile()`](/api/run-skill#analyzefile) - Analyze a single file's hunks
+
+### Configuration
+
+- [`loadWardenConfig()`](/api/config-loading#loadwardenconfig) - Load and parse `warden.toml`
+- [`resolveSkillConfigs()`](/api/config-loading#resolveskillconfigs) - Flatten skills into executable triggers
+
+### Event Context
+
+- [`buildEventContext()`](/api/event-context) - Parse GitHub webhooks into EventContext
+
+### Trigger Matching
+
+- [`matchTrigger()`](/api/trigger-matching#matchtrigger) - Check if a trigger matches an event
+- [`filterContextByPaths()`](/api/trigger-matching#filtercontextbypaths) - Apply path filters to context
+- [`matchGlob()`](/api/trigger-matching#matchglob) - Glob pattern matching
+- [`shouldFail()`](/api/trigger-matching#shouldfail) - Check if findings exceed threshold
+
+### Output Rendering
+
+- [`renderSkillReport()`](/api/output-rendering) - Format findings for GitHub or CLI
+
+## Type System
+
+Warden uses Zod schemas for runtime validation. All core types are exported:
+
+```typescript
+import type {
+  // Core types
+  EventContext,
+  SkillReport,
+  Finding,
+  Severity,
+  Location,
+  
+  // Configuration
+  WardenConfig,
+  SkillConfig,
+  ResolvedTrigger,
+  
+  // Options
+  SkillRunnerOptions,
+  RenderOptions,
+} from '@sentry/warden';
+```
+
+All schemas are also exported for custom validation:
+
+```typescript
+import { 
+  SkillReportSchema,
+  FindingSchema,
+  EventContextSchema 
+} from '@sentry/warden';
+
+const parsed = SkillReportSchema.parse(data);
+```
+
+## Error Handling
+
+Warden exports custom error classes for different failure modes:
+
+```typescript
+import { 
+  ConfigLoadError,
+  SkillRunnerError,
+  EventContextError,
+  SkillLoaderError 
+} from '@sentry/warden';
+
+try {
+  const config = loadWardenConfig(repoPath);
+} catch (error) {
+  if (error instanceof ConfigLoadError) {
+    console.error('Invalid warden.toml:', error.message);
+  }
+}
+```
+
+### Authentication Errors
+
+API key issues are surfaced as `SkillRunnerError` with actionable guidance:
+
+```typescript
+try {
+  await runSkill(skill, context, { apiKey });
+} catch (error) {
+  if (error instanceof SkillRunnerError && 
+      error.message.includes('authentication')) {
+    console.error('Set WARDEN_ANTHROPIC_API_KEY or run: claude login');
+  }
+}
+```
+
+## ESM Only
+
+Warden is published as an ESM-only package. Use `import` syntax:
+
+```typescript
+// ✅ Correct
+import { runSkill } from '@sentry/warden';
+
+// ❌ Wrong - CommonJS not supported
+const { runSkill } = require('@sentry/warden');
+```
+
+## TypeScript Configuration
+
+For best results, enable strict mode in `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "strict": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "target": "ES2022"
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Run Skills" icon="play" href="/api/run-skill">
+    Execute Claude-powered analysis
+  </Card>
+  <Card title="Load Config" icon="file" href="/api/config-loading">
+    Parse warden.toml configuration
+  </Card>
+  <Card title="Build Context" icon="webhook" href="/api/event-context">
+    Process GitHub webhooks
+  </Card>
+  <Card title="Render Output" icon="paintbrush" href="/api/output-rendering">
+    Format findings for GitHub
+  </Card>
+</CardGroup>

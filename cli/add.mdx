@@ -1,0 +1,356 @@
+---
+title: "warden add"
+description: "Add skills to your Warden configuration"
+---
+
+## Overview
+
+The `warden add` command helps you add skills to your `warden.toml` configuration file. It supports both local and remote skills with interactive selection.
+
+## Usage
+
+```bash
+warden add [skill]
+```
+
+## Interactive Mode
+
+Run without arguments to browse available skills:
+
+```bash
+$ npx warden add
+
+🔍 Discovering skills...
+
+? Select a skill to add:
+  ❯ find-bugs (Local)
+    security-audit (Remote: getsentry/skills)
+    code-quality (Local)
+    architecture-review (Local)
+```
+
+Select with arrow keys and press Enter.
+
+## Add Specific Skill
+
+Add a skill by name:
+
+```bash
+# Add local skill
+npx warden add find-bugs
+
+# Add remote skill
+npx warden add getsentry/skills/security-audit
+```
+
+## Remote Skills
+
+Add skills from GitHub repositories:
+
+### Shorthand syntax
+
+```bash
+# Latest version
+npx warden add owner/repo
+
+# Specific skill from repo
+npx warden add owner/repo/skill-name
+```
+
+### Pinned version
+
+```bash
+# Pin to specific SHA
+npx warden add owner/repo@abc1234
+
+# Pin to tag
+npx warden add owner/repo@v1.0.0
+```
+
+### Full URL
+
+```bash
+# HTTPS
+npx warden add https://github.com/owner/repo
+
+# SSH
+npx warden add git@github.com:owner/repo.git
+```
+
+## Configuration Customization
+
+After adding, you can customize the skill configuration:
+
+```bash
+$ npx warden add security-audit
+
+✓ Added security-audit to warden.toml
+
+? Configure skill:
+  ❯ Add path filters
+    Set severity thresholds
+    Configure triggers
+    Done
+```
+
+### Path filters
+
+```
+? Enter path patterns (glob syntax, one per line):
+  src/**/*.ts
+  src/**/*.tsx
+  (blank line to finish)
+
+? Enter ignore patterns:
+  **/*.test.ts
+  **/__tests__/**
+  (blank line to finish)
+```
+
+### Severity thresholds
+
+```
+? Fail on severity:
+  off
+  ❯ high
+  medium
+  low
+
+? Report on severity:
+  off
+  high
+  ❯ medium
+  low
+```
+
+### Triggers
+
+```
+? Add trigger:
+  ❯ Local (CLI)
+  Pull request (GitHub)
+  Schedule (cron)
+  Done
+```
+
+## Examples
+
+### Add local skill
+
+```bash
+$ npx warden add find-bugs
+
+✓ Added find-bugs to warden.toml
+
+Configuration:
+  [[skills]]
+  name = "find-bugs"
+
+  [[skills.triggers]]
+  type = "local"
+```
+
+### Add remote skill with configuration
+
+```bash
+$ npx warden add getsentry/skills/security-audit
+
+✓ Added security-audit to warden.toml
+
+Configuration:
+  [[skills]]
+  name = "security-audit"
+  remote = "getsentry/skills"
+  paths = ["src/**/*.ts"]
+  failOn = "high"
+
+  [[skills.triggers]]
+  type = "pull_request"
+  actions = ["opened", "synchronize"]
+```
+
+### Add with pinned version
+
+```bash
+$ npx warden add getsentry/skills@v1.0.0
+
+✓ Added security-audit to warden.toml
+
+Configuration:
+  [[skills]]
+  name = "security-audit"
+  remote = "getsentry/skills@v1.0.0"
+```
+
+## Options
+
+### --force
+
+Overwrite existing skill configuration:
+
+```bash
+npx warden add find-bugs --force
+```
+
+<Warning>
+This replaces the existing configuration without confirmation.
+</Warning>
+
+### --no-interactive
+
+Skip interactive prompts (use defaults):
+
+```bash
+npx warden add security-audit --no-interactive
+```
+
+### --trigger
+
+Set trigger type:
+
+```bash
+npx warden add find-bugs --trigger local
+npx warden add security-audit --trigger pull_request
+```
+
+Values: `local`, `pull_request`, `schedule`
+
+## Skill Discovery
+
+Warden searches for skills in:
+
+1. **Local directories**:
+   - `.agents/skills/`
+   - `.claude/skills/`
+   - `skills/`
+
+2. **Remote repositories**:
+   - Skills from `remote` field in existing config
+   - Skills from command arguments
+
+### Local skill structure
+
+```
+.agents/skills/
+├── find-bugs/
+│   └── SKILL.md
+└── security-audit/
+    └── SKILL.md
+```
+
+### Remote skill structure
+
+```
+getsentry/skills/
+├── skills/
+│   ├── security-audit/
+│   │   └── SKILL.md
+│   └── code-quality/
+│       └── SKILL.md
+```
+
+See [Remote Skills](/skills/remote-skills) for details.
+
+## Updated Configuration
+
+After running `add`, your `warden.toml` is updated:
+
+```toml warden.toml
+version = 1
+
+[defaults]
+failOn = "high"
+reportOn = "medium"
+
+# Existing skills...
+
+# Newly added skill
+[[skills]]
+name = "security-audit"
+remote = "getsentry/skills"
+paths = ["src/**/*.ts"]
+failOn = "high"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+## Verification
+
+Verify the skill was added:
+
+```bash
+# List configured skills
+grep -A 5 '\[\[skills\]\]' warden.toml
+
+# Test the skill
+npx warden --skills security-audit
+```
+
+## Tips
+
+<AccordionGroup>
+  <Accordion title="Browse available skills">
+    Run without arguments to see all skills:
+
+    ```bash
+    npx warden add
+    ```
+  </Accordion>
+
+  <Accordion title="Add multiple skills">
+    Run `add` multiple times:
+
+    ```bash
+    npx warden add find-bugs
+    npx warden add security-audit
+    npx warden add code-quality
+    ```
+  </Accordion>
+
+  <Accordion title="Customize after adding">
+    Edit `warden.toml` manually for advanced configuration:
+
+    ```toml
+    [[skills]]
+    name = "security-audit"
+    paths = ["src/**/*.ts"]
+    ignorePaths = ["**/*.test.ts"]
+    failOn = "high"
+    maxFindings = 10
+    model = "claude-sonnet-4-20250514"
+    ```
+  </Accordion>
+
+  <Accordion title="Pin remote skills for stability">
+    Pin to specific versions:
+
+    ```bash
+    npx warden add getsentry/skills@v1.0.0
+    ```
+
+    Update with `sync` when ready:
+
+    ```bash
+    npx warden sync
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Initialize" icon="file-circle-plus" href="/cli/init">
+    Set up Warden from scratch
+  </Card>
+  <Card title="Sync skills" icon="arrows-rotate" href="/cli/sync">
+    Update remote skill definitions
+  </Card>
+  <Card title="Remote skills" icon="cloud" href="/skills/remote-skills">
+    Using skills from GitHub
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/skill-config">
+    Skill configuration options
+  </Card>
+</CardGroup>

@@ -1,0 +1,783 @@
+---
+title: Configuration
+description: Complete reference for warden.toml configuration
+---
+
+## Overview
+
+Warden is configured via `warden.toml` in your repository root. The configuration controls:
+- Which skills run and when
+- Path filtering and ignore patterns
+- Severity and confidence thresholds
+- Output formatting and limits
+- Model selection and concurrency
+- Log retention and cleanup
+
+## Configuration Schema
+
+From `src/config/schema.ts:199-233`:
+
+```typescript
+export const WardenConfigSchema = z.object({
+  version: z.literal(1),
+  defaults: DefaultsSchema.optional(),
+  skills: z.array(SkillConfigSchema).default([]),
+  runner: RunnerConfigSchema.optional(),
+  logs: LogsConfigSchema.optional(),
+});
+```
+
+## Version
+
+**Required.** Configuration format version:
+
+```toml
+version = 1
+```
+
+<Note>
+  Future breaking changes will increment the version number.
+</Note>
+
+## Defaults Section
+
+Global defaults inherited by all skills:
+
+```toml
+[defaults]
+failOn = "high"
+reportOn = "medium"
+maxFindings = 100
+reportOnSuccess = false
+requestChanges = false
+failCheck = false
+model = "claude-sonnet-4-20250514"
+maxTurns = 50
+minConfidence = "medium"
+ignorePaths = ["dist/**", "node_modules/**"]
+defaultBranch = "main"
+batchDelayMs = 0
+auxiliaryMaxRetries = 5
+```
+
+### Defaults Schema
+
+From `src/config/schema.ts:154-183`:
+
+```typescript
+export const DefaultsSchema = z.object({
+  /** Fail the build when findings meet this severity */
+  failOn: SeverityThresholdSchema.optional(),
+  /** Only report findings at or above this severity */
+  reportOn: SeverityThresholdSchema.optional(),
+  maxFindings: z.number().int().positive().optional(),
+  /** Report even when there are no findings (default: false) */
+  reportOnSuccess: z.boolean().optional(),
+  /** Use REQUEST_CHANGES review event when findings exceed failOn */
+  requestChanges: z.boolean().optional(),
+  /** Fail the check run when findings exceed failOn */
+  failCheck: z.boolean().optional(),
+  /** Default model for all skills */
+  model: z.string().optional(),
+  /** Maximum agentic turns per hunk analysis (default: 50) */
+  maxTurns: z.number().int().positive().optional(),
+  /** Minimum confidence level for findings */
+  minConfidence: ConfidenceThresholdSchema.optional(),
+  /** Path patterns to exclude from all skills */
+  ignorePaths: z.array(z.string()).optional(),
+  /** Default branch (auto-detected if not specified) */
+  defaultBranch: z.string().optional(),
+  /** Chunking configuration */
+  chunking: ChunkingConfigSchema.optional(),
+  /** Delay in ms between batch starts (default: 0) */
+  batchDelayMs: z.number().int().nonnegative().optional(),
+  /** Max retries for auxiliary Haiku calls (default: 5) */
+  auxiliaryMaxRetries: z.number().int().positive().optional(),
+});
+```
+
+### Field Descriptions
+
+<Accordion title="failOn: SeverityThreshold">
+  **Fail the build when findings meet this severity**
+  
+  Values: `"high"`, `"medium"`, `"low"`, `"off"`
+  
+  - `"high"` - Fail only on high severity findings
+  - `"medium"` - Fail on medium or high severity
+  - `"low"` - Fail on any severity
+  - `"off"` - Never fail (always succeed)
+  
+  Default: Not set (no failure behavior)
+  
+  ```toml
+  [defaults]
+  failOn = "high"  # Fail CI on high severity
+  ```
+</Accordion>
+
+<Accordion title="reportOn: SeverityThreshold">
+  **Only report findings at or above this severity**
+  
+  Values: `"high"`, `"medium"`, `"low"`, `"off"`
+  
+  - `"high"` - Show only high severity
+  - `"medium"` - Show medium and high
+  - `"low"` - Show all findings
+  - `"off"` - Show nothing (disable output)
+  
+  Default: Not set (show all findings)
+  
+  ```toml
+  [defaults]
+  reportOn = "medium"  # Hide low severity findings
+  ```
+</Accordion>
+
+<Accordion title="maxFindings: number">
+  **Maximum number of findings to display**
+  
+  Limits output size for large reports. Findings are sorted by priority (severity, confidence, location).
+  
+  Default: Unlimited
+  
+  ```toml
+  [defaults]
+  maxFindings = 100  # Stop after 100 findings
+  ```
+</Accordion>
+
+<Accordion title="reportOnSuccess: boolean">
+  **Report even when there are no findings**
+  
+  Useful for confirming a skill ran successfully.
+  
+  Default: `false`
+  
+  ```toml
+  [defaults]
+  reportOnSuccess = true
+  ```
+</Accordion>
+
+<Accordion title="requestChanges: boolean">
+  **Use GitHub REQUEST_CHANGES review event**
+  
+  When true and findings exceed `failOn`, creates a REQUEST_CHANGES review instead of COMMENT.
+  
+  Default: `false`
+  
+  ```toml
+  [defaults]
+  requestChanges = true  # Block PR merge
+  ```
+</Accordion>
+
+<Accordion title="failCheck: boolean">
+  **Fail the GitHub check run when findings exceed failOn**
+  
+  When true, the check run shows as failed (red X) instead of neutral.
+  
+  Default: `false`
+  
+  ```toml
+  [defaults]
+  failCheck = true  # Show failed check status
+  ```
+</Accordion>
+
+<Accordion title="model: string">
+  **Default Claude model for all skills**
+  
+  Uses Claude SDK default if not specified.
+  
+  ```toml
+  [defaults]
+  model = "claude-sonnet-4-20250514"
+  ```
+</Accordion>
+
+<Accordion title="maxTurns: number">
+  **Maximum agentic turns per hunk analysis**
+  
+  Limits API round-trips to prevent runaway costs.
+  
+  Default: `50`
+  
+  ```toml
+  [defaults]
+  maxTurns = 30  # Reduce for faster analysis
+  ```
+</Accordion>
+
+<Accordion title="minConfidence: ConfidenceThreshold">
+  **Minimum confidence level for findings**
+  
+  Values: `"high"`, `"medium"`, `"low"`, `"off"`
+  
+  - `"high"` - Show only high confidence
+  - `"medium"` - Show medium and high (recommended)
+  - `"low"` - Show all findings
+  - `"off"` - No filtering
+  
+  Default: `"medium"`
+  
+  ```toml
+  [defaults]
+  minConfidence = "high"  # Only proven issues
+  ```
+</Accordion>
+
+<Accordion title="ignorePaths: string[]">
+  **Path patterns to exclude from all skills**
+  
+  Uses glob syntax. Applied additively with skill-level `ignorePaths`.
+  
+  ```toml
+  [defaults]
+  ignorePaths = [
+    "dist/**",
+    "node_modules/**",
+    "**/*.generated.ts"
+  ]
+  ```
+</Accordion>
+
+<Accordion title="defaultBranch: string">
+  **Repository default branch**
+  
+  Auto-detected from git if not specified.
+  
+  ```toml
+  [defaults]
+  defaultBranch = "main"
+  ```
+</Accordion>
+
+<Accordion title="batchDelayMs: number">
+  **Delay in milliseconds between batch starts**
+  
+  Adds artificial delay when processing files in parallel. Useful for rate limiting.
+  
+  Default: `0`
+  
+  ```toml
+  [defaults]
+  batchDelayMs = 100  # 100ms delay between batches
+  ```
+</Accordion>
+
+<Accordion title="auxiliaryMaxRetries: number">
+  **Max retries for auxiliary Haiku calls**
+  
+  Applies to extraction repair, semantic dedup, fix evaluation, etc.
+  
+  Default: `5`
+  
+  ```toml
+  [defaults]
+  auxiliaryMaxRetries = 3  # Fewer retries
+  ```
+</Accordion>
+
+## Skills Section
+
+Array of skill configurations:
+
+```toml
+[[skills]]
+name = "find-warden-bugs"
+paths = ["src/**/*.ts"]
+ignorePaths = ["src/**/*.test.ts"]
+remote = "getsentry/sentry-skills"
+failOn = "high"
+reportOn = "medium"
+maxFindings = 50
+reportOnSuccess = false
+requestChanges = false
+failCheck = false
+model = "claude-sonnet-4"
+maxTurns = 30
+minConfidence = "medium"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+### Skill Schema
+
+From `src/config/schema.ts:87-113`:
+
+```typescript
+export const SkillConfigSchema = z.object({
+  name: z.string().min(1),
+  paths: z.array(z.string()).optional(),
+  ignorePaths: z.array(z.string()).optional(),
+  remote: z.string().optional(),
+  // Skill-level defaults
+  failOn: SeverityThresholdSchema.optional(),
+  reportOn: SeverityThresholdSchema.optional(),
+  maxFindings: z.number().int().positive().optional(),
+  reportOnSuccess: z.boolean().optional(),
+  requestChanges: z.boolean().optional(),
+  failCheck: z.boolean().optional(),
+  model: z.string().optional(),
+  maxTurns: z.number().int().positive().optional(),
+  minConfidence: ConfidenceThresholdSchema.optional(),
+  triggers: z.array(SkillTriggerSchema).optional(),
+});
+```
+
+### Field Descriptions
+
+<Accordion title="name: string (required)">
+  **Skill name to load**
+  
+  Resolves to:
+  - Skill in conventional directories (`.agents/skills/{name}`)
+  - Direct path if contains `/` or `\`
+  - Remote repository if `remote` is set
+  
+  ```toml
+  [[skills]]
+  name = "security-audit"
+  ```
+</Accordion>
+
+<Accordion title="paths: string[]">
+  **Path patterns to include**
+  
+  Only analyze files matching at least one pattern. Uses glob syntax.
+  
+  **Required for schedule triggers.**
+  
+  ```toml
+  [[skills]]
+  paths = ["src/**/*.ts", "lib/**/*.ts"]
+  ```
+</Accordion>
+
+<Accordion title="ignorePaths: string[]">
+  **Path patterns to exclude**
+  
+  Skip files matching any pattern. Applied additively with `defaults.ignorePaths`.
+  
+  ```toml
+  [[skills]]
+  ignorePaths = ["**/*.test.ts", "**/*.d.ts"]
+  ```
+</Accordion>
+
+<Accordion title="remote: string">
+  **Remote repository reference**
+  
+  Format: `owner/repo` or `owner/repo@ref` where ref is a branch, tag, or SHA.
+  
+  ```toml
+  [[skills]]
+  remote = "getsentry/sentry-skills"       # HEAD
+  remote = "getsentry/sentry-skills@main"  # Branch
+  remote = "getsentry/sentry-skills@v1.2" # Tag
+  ```
+</Accordion>
+
+<Accordion title="Other skill fields">
+  Skills inherit all output configuration fields from `defaults`:
+  
+  - `failOn`
+  - `reportOn`
+  - `maxFindings`
+  - `reportOnSuccess`
+  - `requestChanges`
+  - `failCheck`
+  - `model`
+  - `maxTurns`
+  - `minConfidence`
+  
+  See [Defaults Section](#defaults-section) for descriptions.
+</Accordion>
+
+### Validation Rules
+
+From `src/config/schema.ts:207-232`:
+
+```typescript
+.superRefine((config, ctx) => {
+  // No duplicate skill names
+  const names = config.skills.map((s) => s.name);
+  const duplicates = names.filter((name, i) => names.indexOf(name) !== i);
+  if (duplicates.length > 0) {
+    ctx.addIssue({ message: `Duplicate skill names: ${duplicates}` });
+  }
+
+  // Schedule triggers require paths
+  for (const [i, skill] of config.skills.entries()) {
+    if (skill.triggers) {
+      for (const trigger of skill.triggers) {
+        if (trigger.type === 'schedule' && !skill.paths) {
+          ctx.addIssue({
+            message: "paths is required for schedule triggers",
+            path: ['skills', i, 'paths'],
+          });
+        }
+      }
+    }
+  }
+})
+```
+
+## Triggers Section
+
+Nested under `[[skills.triggers]]`:
+
+```toml
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+paths = ["src/auth/**"]
+ignorePaths = ["**/*.test.ts"]
+failOn = "high"
+reportOn = "medium"
+maxFindings = 10
+```
+
+See [Triggers](/concepts/triggers) for complete documentation.
+
+### Trigger Schema
+
+From `src/config/schema.ts:51-84`:
+
+```typescript
+export const SkillTriggerSchema = z.object({
+  type: TriggerTypeSchema,
+  actions: z.array(z.string()).min(1).optional(),
+  // Per-trigger overrides
+  failOn: SeverityThresholdSchema.optional(),
+  reportOn: SeverityThresholdSchema.optional(),
+  maxFindings: z.number().int().positive().optional(),
+  reportOnSuccess: z.boolean().optional(),
+  requestChanges: z.boolean().optional(),
+  failCheck: z.boolean().optional(),
+  model: z.string().optional(),
+  maxTurns: z.number().int().positive().optional(),
+  minConfidence: ConfidenceThresholdSchema.optional(),
+  schedule: ScheduleConfigSchema.optional(),
+}).refine(
+  (data) => {
+    if (data.type === 'pull_request') {
+      return data.actions !== undefined && data.actions.length > 0;
+    }
+    return true;
+  },
+  { message: "actions is required for pull_request triggers" }
+);
+```
+
+## Runner Section
+
+Concurrency and execution settings:
+
+```toml
+[runner]
+concurrency = 4
+```
+
+### Runner Schema
+
+From `src/config/schema.ts:116-120`:
+
+```typescript
+export const RunnerConfigSchema = z.object({
+  /** Max concurrent file analyses across all skills (default: 4) */
+  concurrency: z.number().int().positive().optional(),
+});
+```
+
+<Accordion title="concurrency: number">
+  **Maximum concurrent file analyses**
+  
+  Controls parallelism across all skills. Higher values speed up analysis but increase memory usage.
+  
+  Default: `4`
+  
+  ```toml
+  [runner]
+  concurrency = 8  # Analyze 8 files in parallel
+  ```
+</Accordion>
+
+## Logs Section
+
+Log file retention and cleanup:
+
+```toml
+[logs]
+cleanup = "ask"
+retentionDays = 30
+```
+
+### Logs Schema
+
+From `src/config/schema.ts:190-196`:
+
+```typescript
+export const LogsConfigSchema = z.object({
+  /** How to handle expired log files */
+  cleanup: LogCleanupModeSchema.default('ask'),
+  /** Days to retain log files (default: 30) */
+  retentionDays: z.number().int().positive().default(30),
+});
+```
+
+<Accordion title="cleanup: LogCleanupMode">
+  **How to handle expired log files**
+  
+  Values: `"ask"`, `"auto"`, `"never"`
+  
+  - `"ask"` - Prompt in TTY, auto-delete otherwise (default)
+  - `"auto"` - Silently delete expired logs
+  - `"never"` - Keep all logs forever
+  
+  ```toml
+  [logs]
+  cleanup = "auto"  # Delete old logs automatically
+  ```
+</Accordion>
+
+<Accordion title="retentionDays: number">
+  **Number of days to retain log files**
+  
+  Logs older than this are considered expired for cleanup.
+  
+  Default: `30`
+  
+  ```toml
+  [logs]
+  retentionDays = 7  # Keep logs for 1 week
+  ```
+</Accordion>
+
+## Chunking Configuration
+
+Advanced file processing options:
+
+```toml
+[defaults.chunking]
+maxContextFiles = 50
+
+[defaults.chunking.coalesce]
+enabled = true
+maxGapLines = 30
+maxChunkSize = 8000
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/pnpm-lock.yaml"
+mode = "skip"
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/*.generated.ts"
+mode = "whole-file"
+```
+
+### Chunking Schema
+
+From `src/config/schema.ts:143-151`:
+
+```typescript
+export const ChunkingConfigSchema = z.object({
+  /** Patterns to control file processing mode */
+  filePatterns: z.array(FilePatternSchema).optional(),
+  /** Coalescing options for merging nearby hunks */
+  coalesce: CoalesceConfigSchema.optional(),
+  /** Max "other files" to list in hunk prompts (default: 50) */
+  maxContextFiles: z.number().int().nonnegative().default(50),
+});
+```
+
+### File Pattern Schema
+
+From `src/config/schema.ts:123-129`:
+
+```typescript
+export const FilePatternSchema = z.object({
+  /** Glob pattern to match files */
+  pattern: z.string(),
+  /** How to handle matching files */
+  mode: z.enum(['per-hunk', 'whole-file', 'skip']).default('skip'),
+});
+```
+
+**Modes:**
+- `per-hunk` - Analyze each hunk separately (default for diffs)
+- `whole-file` - Analyze entire file as one chunk
+- `skip` - Don't analyze this file
+
+### Coalesce Schema
+
+From `src/config/schema.ts:132-140`:
+
+```typescript
+export const CoalesceConfigSchema = z.object({
+  /** Enable hunk coalescing (default: true) */
+  enabled: z.boolean().default(true),
+  /** Max lines gap between hunks to merge (default: 30) */
+  maxGapLines: z.number().int().nonnegative().default(30),
+  /** Target max size per chunk in characters (default: 8000) */
+  maxChunkSize: z.number().int().positive().default(8000),
+});
+```
+
+## Configuration Precedence
+
+Configuration is resolved in layers:
+
+<Steps>
+  <Step title="Schema Defaults">
+    Zod schema `.default()` values (e.g., `maxTurns: 50`)
+  </Step>
+  
+  <Step title="Global Defaults">
+    `[defaults]` section in `warden.toml`
+  </Step>
+  
+  <Step title="Skill Config">
+    `[[skills]]` section fields override defaults
+  </Step>
+  
+  <Step title="Trigger Config">
+    `[[skills.triggers]]` fields override skill config
+  </Step>
+  
+  <Step title="CLI Flags">
+    Command-line flags override everything (e.g., `--fail-on high`)
+  </Step>
+  
+  <Step title="Environment Variables">
+    `WARDEN_*` environment variables for GitHub Action inputs
+  </Step>
+</Steps>
+
+**Precedence order:** CLI > Env > Trigger > Skill > Defaults > Schema
+
+## Environment Variables
+
+GitHub Action inputs map to environment variables:
+
+| Input | Environment Variable | Description |
+|-------|---------------------|-------------|
+| `anthropic-api-key` | `WARDEN_ANTHROPIC_API_KEY` | Anthropic API key |
+| `fail-on` | `WARDEN_FAIL_ON` | Severity threshold for failure |
+| `report-on` | `WARDEN_REPORT_ON` | Minimum severity to report |
+| `model` | `WARDEN_MODEL` | Claude model to use |
+| `max-turns` | `WARDEN_MAX_TURNS` | Max agentic turns |
+| `max-findings` | `WARDEN_MAX_FINDINGS` | Max findings to show |
+| `config-path` | `WARDEN_CONFIG_PATH` | Path to warden.toml |
+
+## Complete Example
+
+```toml
+version = 1
+
+[defaults]
+failOn = "high"
+reportOn = "medium"
+maxFindings = 100
+reportOnSuccess = false
+model = "claude-sonnet-4-20250514"
+maxTurns = 50
+minConfidence = "medium"
+ignorePaths = [
+  "dist/**",
+  "node_modules/**",
+  "**/*.generated.ts",
+  "**/*.test.ts"
+]
+
+[defaults.chunking]
+maxContextFiles = 50
+
+[defaults.chunking.coalesce]
+enabled = true
+maxGapLines = 30
+maxChunkSize = 8000
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/pnpm-lock.yaml"
+mode = "skip"
+
+[runner]
+concurrency = 4
+
+[logs]
+cleanup = "ask"
+retentionDays = 30
+
+# Security audit - runs on all PRs
+[[skills]]
+name = "security-audit"
+paths = ["src/**/*.ts", "lib/**/*.ts"]
+failOn = "medium"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+
+# Bug detection - runs on PRs and locally
+[[skills]]
+name = "find-warden-bugs"
+paths = ["src/**/*.ts"]
+ignorePaths = ["src/**/*.test.ts"]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+failOn = "high"
+maxFindings = 50
+
+[[skills.triggers]]
+type = "local"
+failOn = "off"
+reportOn = "medium"
+
+# Weekly full repo scan
+[[skills]]
+name = "full-repo-audit"
+remote = "getsentry/sentry-skills"
+paths = ["src/**/*.ts"]
+
+[[skills.triggers]]
+type = "schedule"
+schedule.issueTitle = "Weekly Security Scan"
+schedule.createFixPR = true
+schedule.fixBranchPrefix = "warden-weekly"
+```
+
+## Validation
+
+Configuration is validated on load with helpful error messages:
+
+```bash
+$ npx warden
+✗ Configuration error:
+  - skills[0].triggers[0]: actions is required for pull_request triggers
+  - skills[2]: paths is required for skills with schedule triggers
+  - Duplicate skill names: security-audit
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skills" icon="wand-magic-sparkles" href="/concepts/skills">
+    Learn about skill structure and loading
+  </Card>
+  <Card title="Triggers" icon="bolt" href="/concepts/triggers">
+    Understand trigger types and matching
+  </Card>
+  <Card title="Findings" icon="magnifying-glass" href="/concepts/findings">
+    Explore finding structure and filtering
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/commands">
+    Browse command-line options
+  </Card>
+</CardGroup>

@@ -1,0 +1,512 @@
+---
+title: Trigger Configuration
+description: Control when and where skills run
+---
+
+Triggers define when a skill executes. Configure triggers to run skills on pull requests, locally via CLI, or on scheduled intervals.
+
+## Trigger Types
+
+Warden supports three trigger types:
+
+- **`pull_request`** - GitHub pull request events
+- **`local`** - Local CLI execution only
+- **`schedule`** - Scheduled runs (GitHub Actions cron)
+
+```toml
+[[skills]]
+name = "my-skill"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+
+[[skills.triggers]]
+type = "local"
+
+[[skills.triggers]]
+type = "schedule"
+```
+
+<Note>
+  **Wildcard skills:** Skills without triggers run everywhere (PR, local, and schedule contexts). Add explicit triggers to restrict when a skill runs.
+</Note>
+
+## Pull Request Triggers
+
+Run skills on GitHub pull request events.
+
+<ParamField path="type" type="enum" required>
+  Must be `"pull_request"` for PR triggers.
+</ParamField>
+
+<ParamField path="actions" type="array" required>
+  Pull request actions that trigger the skill.
+  
+  **Valid actions:**
+  - `"opened"` - PR is created
+  - `"synchronize"` - New commits pushed to PR
+  - `"reopened"` - Closed PR is reopened
+  - `"closed"` - PR is closed
+  
+  ```toml
+  [[skills.triggers]]
+  type = "pull_request"
+  actions = ["opened", "synchronize", "reopened"]
+  ```
+</ParamField>
+
+### Examples
+
+**Run on PR creation and updates:**
+
+```toml
+[[skills]]
+name = "security-scanner"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+**Run on all PR events:**
+
+```toml
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened", "closed"]
+```
+
+**Run only when PR is opened:**
+
+```toml
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened"]
+```
+
+## Local Triggers
+
+Restrict a skill to local CLI execution. The skill will **not** run in GitHub Actions.
+
+<ParamField path="type" type="enum" required>
+  Must be `"local"` for CLI-only triggers.
+</ParamField>
+
+```toml
+[[skills]]
+name = "experimental-check"
+
+[[skills.triggers]]
+type = "local"  # Only runs via: warden run experimental-check
+```
+
+<Note>
+  Local-only skills are useful for:
+  - Experimental checks you're testing
+  - Heavy analysis that's too slow for CI
+  - Interactive workflows requiring human review
+</Note>
+
+## Schedule Triggers
+
+Run skills on a cron schedule in GitHub Actions. Requires GitHub Actions workflow configuration.
+
+<ParamField path="type" type="enum" required>
+  Must be `"schedule"` for scheduled triggers.
+</ParamField>
+
+<ParamField path="schedule.issueTitle" type="string">
+  Title for the tracking issue created for this scheduled run.
+  
+  **Default:** `"Warden: {skillName}"`
+  
+  ```toml
+  [[skills.triggers]]
+  type = "schedule"
+  
+  [skills.triggers.schedule]
+  issueTitle = "Nightly Security Audit"
+  ```
+</ParamField>
+
+<ParamField path="schedule.createFixPR" type="boolean">
+  Automatically create a pull request with fixes when `suggestedFix` is available.
+  
+  **Default:** `false`
+  
+  ```toml
+  [skills.triggers.schedule]
+  createFixPR = true
+  ```
+</ParamField>
+
+<ParamField path="schedule.fixBranchPrefix" type="string">
+  Branch name prefix for fix PRs.
+  
+  **Default:** `"warden-fix"`
+  
+  ```toml
+  [skills.triggers.schedule]
+  createFixPR = true
+  fixBranchPrefix = "security-fix"
+  ```
+</ParamField>
+
+<Warning>
+  **Paths required:** Skills with schedule triggers must specify `paths` to define which files to analyze.
+  
+  ```toml
+  # ❌ Invalid - missing paths
+  [[skills]]
+  name = "nightly-scan"
+  
+  [[skills.triggers]]
+  type = "schedule"
+  
+  # ✅ Valid
+  [[skills]]
+  name = "nightly-scan"
+  paths = ["src/**/*.ts"]
+  
+  [[skills.triggers]]
+  type = "schedule"
+  ```
+</Warning>
+
+### Schedule Examples
+
+**Basic scheduled scan:**
+
+```toml
+[[skills]]
+name = "nightly-security-scan"
+paths = ["src/**/*.ts", "lib/**/*.js"]
+
+[[skills.triggers]]
+type = "schedule"
+```
+
+**Scheduled scan with auto-fix PRs:**
+
+```toml
+[[skills]]
+name = "auto-fixer"
+paths = ["src/**/*.ts"]
+
+[[skills.triggers]]
+type = "schedule"
+
+[skills.triggers.schedule]
+issueTitle = "Weekly Code Cleanup"
+createFixPR = true
+fixBranchPrefix = "warden-cleanup"
+```
+
+**GitHub Actions workflow:**
+
+```yaml .github/workflows/warden-schedule.yml
+name: Warden Scheduled Scan
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM daily
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: getsentry/warden@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+## Multiple Triggers
+
+Skills can have multiple triggers to run in different contexts with different settings.
+
+```toml
+[[skills]]
+name = "security-scanner"
+paths = ["src/**/*.ts"]
+
+# Strict checks on PR
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+failOn = "high"          # Fail CI on high severity
+minConfidence = "high"   # High confidence only
+
+# Comprehensive scheduled scan
+[[skills.triggers]]
+type = "schedule"
+failOn = "medium"        # More lenient
+minConfidence = "medium" # Lower threshold
+
+[skills.triggers.schedule]
+issueTitle = "Weekly Security Review"
+createFixPR = true
+
+# Allow local testing
+[[skills.triggers]]
+type = "local"
+reportOn = "low"         # Show everything locally
+```
+
+## Per-Trigger Overrides
+
+Triggers can override skill-level and default-level settings.
+
+<ParamField path="failOn" type="enum">
+  Override `failOn` threshold for this trigger.
+  
+  ```toml
+  [[skills]]
+  name = "my-skill"
+  failOn = "medium"  # Skill default
+  
+  [[skills.triggers]]
+  type = "pull_request"
+  actions = ["opened"]
+  failOn = "high"    # Stricter for PRs
+  ```
+</ParamField>
+
+<ParamField path="reportOn" type="enum">
+  Override `reportOn` threshold for this trigger.
+</ParamField>
+
+<ParamField path="maxFindings" type="number">
+  Override `maxFindings` limit for this trigger.
+</ParamField>
+
+<ParamField path="reportOnSuccess" type="boolean">
+  Override `reportOnSuccess` for this trigger.
+</ParamField>
+
+<ParamField path="requestChanges" type="boolean">
+  Override `requestChanges` for this trigger.
+</ParamField>
+
+<ParamField path="failCheck" type="boolean">
+  Override `failCheck` for this trigger.
+</ParamField>
+
+<ParamField path="model" type="string">
+  Override model selection for this trigger (highest precedence).
+  
+  ```toml
+  [[skills]]
+  name = "my-skill"
+  model = "claude-sonnet-4-20250514"  # Skill default
+  
+  [[skills.triggers]]
+  type = "schedule"
+  model = "claude-opus-4-20250514"    # Use Opus for scheduled runs
+  ```
+</ParamField>
+
+<ParamField path="maxTurns" type="number">
+  Override `maxTurns` for this trigger.
+</ParamField>
+
+<ParamField path="minConfidence" type="enum">
+  Override `minConfidence` threshold for this trigger.
+</ParamField>
+
+### Override Precedence
+
+Settings are resolved in this order (highest to lowest):
+
+1. **Trigger-level** (in `[[skills.triggers]]`)
+2. **Skill-level** (in `[[skills]]`)
+3. **Defaults** (in `[defaults]`)
+4. Built-in defaults
+
+```toml
+[defaults]
+failOn = "medium"        # Priority 3
+
+[[skills]]
+name = "my-skill"
+failOn = "high"          # Priority 2 (overrides defaults)
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened"]
+failOn = "low"           # Priority 1 (overrides skill and defaults)
+```
+
+## Common Patterns
+
+### PR and Schedule with Different Thresholds
+
+Strict checking on PRs, comprehensive scheduled scans:
+
+```toml
+[[skills]]
+name = "security-scanner"
+paths = ["src/**/*.ts"]
+
+# Strict PR checks
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+failOn = "high"
+minConfidence = "high"
+requestChanges = true
+failCheck = true
+
+# Comprehensive nightly scan
+[[skills.triggers]]
+type = "schedule"
+failOn = "medium"
+minConfidence = "medium"
+reportOn = "low"
+
+[skills.triggers.schedule]
+issueTitle = "Nightly Security Scan"
+createFixPR = true
+```
+
+### Different Models per Context
+
+Fast model for PRs, powerful model for scheduled analysis:
+
+```toml
+[defaults]
+model = "claude-sonnet-4-20250514"
+
+[[skills]]
+name = "deep-analysis"
+paths = ["src/**/*.ts"]
+
+# Quick PR feedback
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+model = "claude-sonnet-4-20250514"
+maxTurns = 30
+
+# Thorough scheduled analysis
+[[skills.triggers]]
+type = "schedule"
+model = "claude-opus-4-20250514"
+maxTurns = 100
+```
+
+### Local Experimentation
+
+Test skills locally before enabling in CI:
+
+```toml
+[[skills]]
+name = "experimental-checker"
+paths = ["src/**/*.ts"]
+
+# Only run locally for now
+[[skills.triggers]]
+type = "local"
+reportOn = "low"  # Show everything for testing
+
+# TODO: Enable for PRs after validation
+# [[skills.triggers]]
+# type = "pull_request"
+# actions = ["opened", "synchronize"]
+```
+
+### Wildcard Skill
+
+Run everywhere with no restrictions:
+
+```toml
+[[skills]]
+name = "universal-linter"
+paths = ["src/**/*.ts"]
+# No triggers = runs on PR, local, and schedule
+```
+
+## Trigger Matching
+
+Warden uses trigger configuration to determine which skills to run:
+
+### Pull Request Context
+
+When running on a PR (GitHub Actions or `warden pr <number>`):
+
+- Skills with `type = "pull_request"` triggers matching the PR action
+- Wildcard skills (no triggers)
+
+### Local Context
+
+When running via CLI (`warden`, `warden run`):
+
+- Skills with `type = "local"` triggers
+- Wildcard skills (no triggers)
+
+### Schedule Context
+
+When triggered by GitHub Actions schedule:
+
+- Skills with `type = "schedule"` triggers
+- Wildcard skills (no triggers)
+
+<Note>
+  Use `warden run <skill-name>` to explicitly run a specific skill, ignoring trigger configuration.
+</Note>
+
+## Validation
+
+<Warning>
+  **Pull request triggers require actions:**
+  
+  ```toml
+  # ❌ Invalid
+  [[skills.triggers]]
+  type = "pull_request"  # Error: actions required!
+  
+  # ✅ Valid
+  [[skills.triggers]]
+  type = "pull_request"
+  actions = ["opened"]
+  ```
+</Warning>
+
+<Warning>
+  **Schedule triggers require paths:**
+  
+  ```toml
+  # ❌ Invalid
+  [[skills]]
+  name = "nightly-scan"
+  
+  [[skills.triggers]]
+  type = "schedule"  # Error: skill must have paths!
+  
+  # ✅ Valid
+  [[skills]]
+  name = "nightly-scan"
+  paths = ["src/**"]
+  
+  [[skills.triggers]]
+  type = "schedule"
+  ```
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skill Configuration" icon="puzzle-piece" href="/configuration/skill-config">
+    Configure skill behavior and paths
+  </Card>
+  <Card title="Severity Thresholds" icon="gauge" href="/configuration/severity-thresholds">
+    Control when builds fail
+  </Card>
+  <Card title="GitHub Actions Setup" icon="github" href="/guides/github-actions">
+    Configure CI/CD integration
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/reference/cli">
+    Command-line usage
+  </Card>
+</CardGroup>

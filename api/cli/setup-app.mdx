@@ -1,0 +1,365 @@
+---
+title: 'warden setup-app'
+description: 'Create a GitHub App for Warden to post as a custom bot'
+---
+
+# warden setup-app
+
+Create a GitHub App via the manifest flow to enable Warden to post PR reviews and comments as a custom bot instead of GitHub Actions.
+
+## Usage
+
+```bash
+warden setup-app [options]
+```
+
+## What It Does
+
+1. **Starts local server** - Temporary server on `localhost` to handle OAuth callback
+2. **Opens browser** - Navigates to GitHub App creation page
+3. **Creates app** - You click "Create GitHub App" on GitHub
+4. **Exchanges code** - Receives OAuth code and exchanges for credentials
+5. **Displays credentials** - Shows App ID and Private Key to add to GitHub secrets
+
+## Options
+
+<ParamField path="--org" type="string">
+  Create the app under an organization instead of personal account
+  
+  ```bash
+  warden setup-app --org myorganization
+  ```
+</ParamField>
+
+<ParamField path="--port" type="number" default="3000">
+  Local server port for OAuth callback
+  
+  ```bash
+  warden setup-app --port 8080
+  ```
+</ParamField>
+
+<ParamField path="--timeout" type="number" default="300">
+  Callback timeout in seconds (5 minutes default)
+  
+  ```bash
+  warden setup-app --timeout 600  # 10 minutes
+  ```
+</ParamField>
+
+<ParamField path="--name" type="string">
+  Custom app name (default: "Warden")
+  
+  ```bash
+  warden setup-app --name "My Company Warden Bot"
+  ```
+</ParamField>
+
+<ParamField path="--no-open" type="boolean" default="false">
+  Don't open browser automatically, print URL instead
+  
+  ```bash
+  warden setup-app --no-open
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean" default="false">
+  Suppress non-error output
+  
+  ```bash
+  warden setup-app --quiet
+  ```
+</ParamField>
+
+<ParamField path="--color / --no-color" type="boolean">
+  Force color output on or off
+  
+  ```bash
+  warden setup-app --no-color
+  ```
+</ParamField>
+
+## Permissions
+
+The created GitHub App will request these permissions:
+
+- **contents: write** - Read files, resolve review threads
+- **pull_requests: write** - Post review comments and annotations
+- **issues: write** - Create and update issues
+- **checks: write** - Create check runs
+- **metadata: read** - Read repository metadata
+
+## Exit Codes
+
+<ResponseField name="0" type="Success">
+  GitHub App created successfully
+</ResponseField>
+
+<ResponseField name="1" type="Error">
+  - Port already in use
+  - Network error
+  - GitHub API error
+  - User cancelled (Ctrl+C)
+  - Timeout waiting for callback
+</ResponseField>
+
+## Complete Workflow
+
+### 1. Run setup-app
+
+```bash
+$ warden setup-app
+
+SETUP GITHUB APP
+
+This will create a GitHub App with the following permissions:
+  • contents: write       - Read files, resolve review threads
+  • pull_requests: write  - Post review comments
+  • issues: write         - Create/update issues
+  • checks: write         - Create check runs
+  • metadata: read        - Read repository metadata
+
+Starting local server on http://localhost:3000...
+Opening browser...
+
+On the GitHub page, click "Create GitHub App" to continue.
+
+Waiting for GitHub callback... (Ctrl+C to cancel)
+```
+
+### 2. Create app on GitHub
+
+Your browser opens to GitHub's app creation page with pre-filled manifest. Click **"Create GitHub App"**.
+
+### 3. Receive credentials
+
+```bash
+Exchanging code for credentials...
+
+✓ GitHub App created!
+
+  App ID:    123456
+  App Name:  Warden
+  App URL:   https://github.com/apps/warden-bot
+
+Next steps:
+
+  1. Install the app on your repository:
+     https://github.com/apps/warden-bot/installations/new
+
+  2. Add these secrets to your repository:
+     https://github.com/owner/repo/settings/secrets/actions
+
+     WARDEN_APP_ID          123456
+     WARDEN_PRIVATE_KEY     (copy the key below)
+
+  Private Key (copy entire block including BEGIN/END lines):
+
+     -----BEGIN RSA PRIVATE KEY-----
+     MIIEpAIBAAKCAQEA...
+     ...
+     -----END RSA PRIVATE KEY-----
+```
+
+### 4. Install the app
+
+Click the installation URL or go to **Settings → GitHub Apps → Your App → Install App**.
+
+Select repositories where Warden should run.
+
+### 5. Add secrets
+
+Go to your repository **Settings → Secrets and variables → Actions**:
+
+1. **New repository secret**: `WARDEN_APP_ID`
+   - Value: `123456` (from setup-app output)
+
+2. **New repository secret**: `WARDEN_PRIVATE_KEY`
+   - Value: Copy entire private key including `-----BEGIN/END-----` lines
+
+### 6. Update workflow
+
+Edit `.github/workflows/warden.yml` to use app credentials:
+
+```yaml
+name: Warden
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: getsentry/warden@v2
+        with:
+          anthropic-api-key: ${{ secrets.WARDEN_ANTHROPIC_API_KEY }}
+          # GitHub App credentials (instead of GITHUB_TOKEN)
+          github-app-id: ${{ secrets.WARDEN_APP_ID }}
+          github-private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+```
+
+### 7. Test on a PR
+
+Create or update a pull request. Warden will now post as your custom app:
+
+```
+warden-bot commented 2 minutes ago
+
+🔒 Security Review
+
+**High**: Potential SQL injection in user input
+...
+```
+
+## Benefits of GitHub Apps
+
+### vs GitHub Actions Token
+
+Using a GitHub App instead of `GITHUB_TOKEN` provides:
+
+- **Custom bot identity** - Comments appear from your app, not "github-actions[bot]"
+- **Better attribution** - Clear distinction between different automation tools
+- **Persistent identity** - App identity remains constant across workflows
+- **Enhanced permissions** - More granular control over permissions
+
+### Use Cases
+
+- **Multiple tools** - Distinguish Warden from other CI tools
+- **Brand identity** - Use custom app name and avatar
+- **Enterprise** - Organization-level app management
+
+## Organization Apps
+
+Create app under organization ownership:
+
+```bash
+warden setup-app --org myorganization
+```
+
+Benefits:
+- Shared ownership across org
+- Centralized management
+- Install once, use across repos
+
+## Examples
+
+### Standard Setup
+
+```bash
+warden setup-app
+```
+
+### Organization App
+
+```bash
+warden setup-app --org mycompany
+```
+
+### Custom Name and Port
+
+```bash
+warden setup-app --name "MyCompany Code Guardian" --port 8080
+```
+
+### Headless Server
+
+For remote servers without display:
+
+```bash
+warden setup-app --no-open
+
+# Output includes URL to open manually:
+Open this URL in your browser:
+https://github.com/settings/apps/new?state=...
+```
+
+### Extended Timeout
+
+For slow connections or multi-step approval:
+
+```bash
+warden setup-app --timeout 900  # 15 minutes
+```
+
+## Troubleshooting
+
+### Port Already in Use
+
+```bash
+Port 3000 is already in use. Try a different port with --port <number>
+```
+
+**Solution:**
+```bash
+warden setup-app --port 3001
+```
+
+### Browser Didn't Open
+
+```bash
+Could not open browser automatically.
+
+Open this URL in your browser:
+http://localhost:3000/start?state=abc123
+```
+
+**Solution:** Copy the URL and open in your browser manually.
+
+### Timeout
+
+```bash
+Timeout waiting for callback after 300 seconds.
+```
+
+**Solution:** Increase timeout or check if you completed the GitHub steps:
+```bash
+warden setup-app --timeout 600
+```
+
+### Lost Credentials
+
+If you lost the private key before saving it:
+
+1. Go to **Settings → Developer settings → GitHub Apps**
+2. Click your app
+3. Scroll to **Private keys**
+4. Click **Generate a private key**
+5. Download the `.pem` file
+6. Add contents to `WARDEN_PRIVATE_KEY` secret
+
+### App Created But Error Occurred
+
+If the app was created but you got an error:
+
+```bash
+If the GitHub App was created before this error:
+  1. Go to https://github.com/settings/apps
+  2. Find your app and click "Edit"
+  3. Note the App ID from the "About" section
+  4. Scroll to "Private keys" and click "Generate a private key"
+  5. Install the app: click "Install App" in the sidebar
+  6. Add secrets to your repository:
+     https://github.com/owner/repo/settings/secrets/actions
+     - WARDEN_APP_ID: your App ID
+     - WARDEN_PRIVATE_KEY: contents of the downloaded .pem file
+```
+
+## Security Notes
+
+- **Private key** - Keep the private key secret. Anyone with the key can act as your app.
+- **Scope** - Only install the app on repositories that need it.
+- **Rotation** - Regenerate the private key periodically for security.
+- **Secrets** - Never commit `WARDEN_PRIVATE_KEY` to your repository.
+
+## Related Commands
+
+- [warden init](/api/cli/init) - Initialize Warden configuration
+- [warden](/api/cli/warden) - Run analysis

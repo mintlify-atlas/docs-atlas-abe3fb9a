@@ -1,0 +1,307 @@
+---
+title: Cost Tracking
+description: Track usage statistics, token consumption, and API costs in Warden
+---
+
+Warden provides detailed tracking of API usage, token consumption, and costs across all analysis runs.
+
+## Usage Statistics Structure
+
+Warden tracks comprehensive usage metrics for every analysis:
+
+```typescript src/types/index.ts
+export const UsageStatsSchema = z.object({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cacheReadInputTokens: z.number().int().nonnegative().optional(),
+  cacheCreationInputTokens: z.number().int().nonnegative().optional(),
+  costUSD: z.number().nonnegative(),
+});
+export type UsageStats = z.infer<typeof UsageStatsSchema>;
+```
+
+### Token Normalization
+
+Warden normalizes token counts to provide accurate totals:
+
+```typescript src/sdk/usage.ts
+export function extractUsage(result: SDKResultMessage): UsageStats {
+  const rawInput = result.usage['input_tokens'];
+  const cacheRead = result.usage['cache_read_input_tokens'] ?? 0;
+  const cacheCreation = result.usage['cache_creation_input_tokens'] ?? 0;
+  return {
+    inputTokens: rawInput + cacheRead + cacheCreation,
+    outputTokens: result.usage['output_tokens'],
+    cacheReadInputTokens: cacheRead,
+    cacheCreationInputTokens: cacheCreation,
+    costUSD: result.total_cost_usd,
+  };
+}
+```
+
+<Note>
+The Anthropic API reports `input_tokens` as only the non-cached portion. Warden normalizes this so `inputTokens` represents the **total** input tokens (non-cached + cache_read + cache_creation).
+</Note>
+
+## Viewing Usage Stats
+
+### Terminal Output
+
+Warden displays usage stats at the end of each analysis:
+
+```bash
+warden scan
+```
+
+```
+SUMMARY
+5 findings: ● 2 high  ● 2 medium  ● 1 low
+Analysis completed in 15.8s · 3.0k in / 680 out · $0.00
+```
+
+### JSONL Output
+
+For programmatic access, use JSONL output:
+
+```bash
+warden scan --output=report.jsonl
+```
+
+```json
+{
+  "run": {
+    "timestamp": "2026-03-05T20:00:00.000Z",
+    "durationMs": 15800,
+    "runId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "model": "claude-sonnet-4-20250514"
+  },
+  "skill": "security-scanning",
+  "usage": {
+    "inputTokens": 3000,
+    "outputTokens": 680,
+    "cacheReadInputTokens": 1200,
+    "cacheCreationInputTokens": 800,
+    "costUSD": 0.0048
+  }
+}
+```
+
+## Auxiliary Usage Tracking
+
+Warden tracks additional LLM calls separately from primary analysis:
+
+```typescript src/types/index.ts
+export const AuxiliaryUsageMapSchema = z.record(z.string(), UsageStatsSchema);
+export type AuxiliaryUsageMap = z.infer<typeof AuxiliaryUsageMapSchema>;
+```
+
+### Auxiliary Agents
+
+Auxiliary usage is tracked for:
+
+- **extraction**: JSON extraction repair (when regex fails)
+- **dedup**: Semantic deduplication of findings
+- **merging**: Cross-location finding merging
+- **fix-evaluation**: Automated fix verification
+
+### Aggregation
+
+```typescript src/sdk/usage.ts
+export function aggregateAuxiliaryUsage(
+  entries: AuxiliaryUsageEntry[]
+): AuxiliaryUsageMap | undefined {
+  if (entries.length === 0) return undefined;
+
+  const map: AuxiliaryUsageMap = {};
+  for (const { agent, usage } of entries) {
+    const existing = map[agent];
+    if (existing) {
+      map[agent] = {
+        inputTokens: existing.inputTokens + usage.inputTokens,
+        outputTokens: existing.outputTokens + usage.outputTokens,
+        cacheReadInputTokens: (existing.cacheReadInputTokens ?? 0) + (usage.cacheReadInputTokens ?? 0),
+        cacheCreationInputTokens: (existing.cacheCreationInputTokens ?? 0) + (usage.cacheCreationInputTokens ?? 0),
+        costUSD: existing.costUSD + usage.costUSD,
+      };
+    } else {
+      map[agent] = { ...usage };
+    }
+  }
+  return map;
+}
+```
+
+### Display Format
+
+Auxiliary costs are shown as a breakdown:
+
+```
+Analysis completed in 15.8s · 3.0k in / 680 out · $0.01 (+extraction: $0.00, +dedup: $0.00)
+```
+
+## Cost Optimization
+
+### Prompt Caching
+
+Warden leverages Claude's prompt caching to reduce costs:
+
+<Steps>
+  <Step title="Cache Creation">
+    On the first analysis, Warden creates prompt caches for skill instructions and file context.
+  </Step>
+  <Step title="Cache Reuse">
+    Subsequent analyses read from the cache, reducing input token costs by up to 90%.
+  </Step>
+  <Step title="Cache Monitoring">
+    Track `cacheReadInputTokens` to measure cache effectiveness.
+  </Step>
+</Steps>
+
+### Token Estimation
+
+Warden can estimate token counts from character counts:
+
+```typescript src/sdk/usage.ts
+export function estimateTokens(chars: number): number {
+  return Math.ceil(chars / 4);
+}
+```
+
+<Tip>
+Use the estimation: **1 token ≈ 4 characters** for English text.
+</Tip>
+
+## Per-File Usage
+
+Track usage at the file level:
+
+```typescript src/types/index.ts
+export const FileReportSchema = z.object({
+  filename: z.string(),
+  findingCount: z.number().int().nonnegative(),
+  durationMs: z.number().nonnegative().optional(),
+  usage: UsageStatsSchema.optional(),
+});
+```
+
+### JSONL File Records
+
+```json
+{
+  "skill": "security-scanning",
+  "files": [
+    {
+      "filename": "src/auth.ts",
+      "findings": 2,
+      "durationMs": 3200,
+      "usage": {
+        "inputTokens": 800,
+        "outputTokens": 150,
+        "costUSD": 0.0012
+      }
+    },
+    {
+      "filename": "src/api.ts",
+      "findings": 1,
+      "durationMs": 2800,
+      "usage": {
+        "inputTokens": 650,
+        "outputTokens": 120,
+        "costUSD": 0.0010
+      }
+    }
+  ]
+}
+```
+
+## Cost Formatting
+
+```typescript src/cli/output/formatters.ts
+export function formatCost(costUSD: number): string {
+  return `$${costUSD.toFixed(2)}`;
+}
+
+export function formatTokens(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    return `${(tokens / 1_000_000).toFixed(1)}M`;
+  }
+  if (tokens >= 1_000) {
+    return `${(tokens / 1_000).toFixed(1)}k`;
+  }
+  return String(tokens);
+}
+
+export function formatUsage(usage: UsageStats): string {
+  const inputStr = formatTokens(usage.inputTokens);
+  const outputStr = formatTokens(usage.outputTokens);
+  const costStr = formatCost(usage.costUSD);
+  return `${inputStr} in / ${outputStr} out · ${costStr}`;
+}
+```
+
+## Monitoring Costs
+
+### Log Files
+
+Warden automatically saves detailed usage logs:
+
+```bash
+.warden/logs/a1b2c3d4-2026-03-05T20-00-00-000Z.jsonl
+```
+
+### Parsing Logs
+
+```typescript src/cli/output/jsonl.ts
+export function parseLogMetadata(filePath: string): LogFileMetadata | undefined {
+  // Extracts summary with total usage and cost
+}
+```
+
+### Summary Records
+
+```json
+{
+  "run": {
+    "timestamp": "2026-03-05T20:00:00.000Z",
+    "durationMs": 15800,
+    "runId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+  },
+  "type": "summary",
+  "totalFindings": 5,
+  "bySeverity": { "high": 2, "medium": 2, "low": 1 },
+  "usage": {
+    "inputTokens": 3000,
+    "outputTokens": 680,
+    "cacheReadInputTokens": 1200,
+    "cacheCreationInputTokens": 800,
+    "costUSD": 0.0048
+  },
+  "auxiliaryUsage": {
+    "extraction": { "inputTokens": 100, "outputTokens": 20, "costUSD": 0.0001 },
+    "dedup": { "inputTokens": 80, "outputTokens": 15, "costUSD": 0.0001 }
+  }
+}
+```
+
+## Best Practices
+
+<Accordion title="Track costs per PR">
+Use the `runId` field to associate costs with specific analysis runs and PRs.
+</Accordion>
+
+<Accordion title="Monitor cache effectiveness">
+Track the ratio of `cacheReadInputTokens` to `inputTokens` to measure cache performance.
+</Accordion>
+
+<Accordion title="Set cost budgets">
+Use auxiliary usage tracking to identify expensive operations and optimize them.
+</Accordion>
+
+<Accordion title="Archive logs strategically">
+Configure log retention in `warden.toml` to balance cost tracking with storage:
+```toml
+[logs]
+retentionDays = 30
+cleanup = "auto"
+```
+</Accordion>

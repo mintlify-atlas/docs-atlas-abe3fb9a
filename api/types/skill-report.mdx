@@ -1,0 +1,229 @@
+---
+title: 'SkillReport'
+description: 'Output types returned from skill execution'
+icon: 'file-chart-column'
+---
+
+## SkillReport
+
+The complete report returned from running a skill analysis. Contains findings, usage statistics, and execution metadata.
+
+<ResponseField name="skill" type="string" required>
+  Name of the skill that generated this report (e.g., `"security-audit"`, `"performance-check"`)
+</ResponseField>
+
+<ResponseField name="summary" type="string" required>
+  High-level summary of the analysis results. Generated automatically by Warden after analyzing all findings.
+</ResponseField>
+
+<ResponseField name="findings" type="Finding[]" required>
+  Array of findings discovered by the skill. See [Finding](/api/types/finding) for structure.
+</ResponseField>
+
+<ResponseField name="metadata" type="Record<string, unknown>" default="undefined">
+  Optional arbitrary metadata provided by the skill
+</ResponseField>
+
+<ResponseField name="durationMs" type="number" default="undefined">
+  Total execution time in milliseconds
+</ResponseField>
+
+<ResponseField name="usage" type="UsageStats" default="undefined">
+  Token usage and cost statistics from Claude API calls during skill execution
+</ResponseField>
+
+<ResponseField name="skippedFiles" type="SkippedFile[]" default="undefined">
+  Files that were skipped due to chunking patterns (e.g., lockfiles, generated code)
+</ResponseField>
+
+<ResponseField name="failedHunks" type="number" default="undefined">
+  Number of hunks that failed to analyze due to SDK errors, API errors, timeouts, etc.
+</ResponseField>
+
+<ResponseField name="failedExtractions" type="number" default="undefined">
+  Number of hunks where findings extraction failed (JSON parse errors, malformed output)
+</ResponseField>
+
+<ResponseField name="auxiliaryUsage" type="Record<string, UsageStats>" default="undefined">
+  Usage statistics from auxiliary LLM calls keyed by operation type:
+  - `"extraction-repair"` - Fixing malformed JSON output
+  - `"semantic-dedup"` - Deduplicating similar findings
+  - `"cross-location-merge"` - Merging findings across locations
+  - `"fix-evaluation"` - Evaluating suggested fix quality
+</ResponseField>
+
+<ResponseField name="files" type="FileReport[]" default="undefined">
+  Per-file breakdown of findings, timing, and token usage
+</ResponseField>
+
+<ResponseField name="model" type="string" default="undefined">
+  Claude model used for this skill's analysis (e.g., `"claude-sonnet-4-20250514"`)
+</ResponseField>
+
+---
+
+## FileReport
+
+Per-file analysis results within a skill report.
+
+<ResponseField name="filename" type="string" required>
+  Path to the analyzed file relative to repository root
+</ResponseField>
+
+<ResponseField name="findingCount" type="number" required>
+  Number of findings detected in this file (must be non-negative)
+</ResponseField>
+
+<ResponseField name="durationMs" type="number" default="undefined">
+  Time spent analyzing this file in milliseconds
+</ResponseField>
+
+<ResponseField name="usage" type="UsageStats" default="undefined">
+  Token usage and cost for analyzing this specific file
+</ResponseField>
+
+---
+
+## UsageStats
+
+Token usage and cost tracking from Claude API calls.
+
+<ResponseField name="inputTokens" type="number" required>
+  Number of input tokens consumed (must be non-negative)
+</ResponseField>
+
+<ResponseField name="outputTokens" type="number" required>
+  Number of output tokens generated (must be non-negative)
+</ResponseField>
+
+<ResponseField name="cacheReadInputTokens" type="number" default="undefined">
+  Number of input tokens read from prompt cache (reduces cost)
+</ResponseField>
+
+<ResponseField name="cacheCreationInputTokens" type="number" default="undefined">
+  Number of input tokens written to prompt cache for future reuse
+</ResponseField>
+
+<ResponseField name="costUSD" type="number" required>
+  Total cost in US dollars for this API call (must be non-negative)
+</ResponseField>
+
+<Note>
+  Warden automatically calculates costs based on Claude's pricing. Cache hits significantly reduce costs for repeated analysis.
+</Note>
+
+---
+
+## SkippedFile
+
+Information about files that were skipped during analysis.
+
+<ResponseField name="filename" type="string" required>
+  Path to the skipped file
+</ResponseField>
+
+<ResponseField name="reason" type="'pattern' | 'builtin'" required>
+  Why the file was skipped:
+  - `"pattern"` - Matched a user-defined chunking pattern
+  - `"builtin"` - Matched a built-in skip pattern (e.g., `pnpm-lock.yaml`, `package-lock.json`)
+</ResponseField>
+
+<ResponseField name="pattern" type="string" default="undefined">
+  The glob pattern that caused the file to be skipped (only present when reason is `"pattern"`)
+</ResponseField>
+
+---
+
+## Example: Complete SkillReport
+
+```typescript
+import { runSkill } from '@sentry/warden';
+
+const report = await runSkill(
+  skill,
+  files,
+  eventContext,
+  { model: 'claude-sonnet-4-20250514' }
+);
+
+console.log(report);
+// {
+//   skill: 'security-audit',
+//   summary: 'Found 3 high-severity security issues requiring immediate attention.',
+//   findings: [
+//     {
+//       id: 'sec_xss_42a',
+//       severity: 'high',
+//       confidence: 'high',
+//       title: 'Unescaped user input in HTML template',
+//       description: 'User-controlled data is rendered without escaping...',
+//       location: {
+//         path: 'src/views/profile.tsx',
+//         startLine: 42,
+//         endLine: 42
+//       },
+//       suggestedFix: {
+//         description: 'Use React\'s automatic escaping',
+//         diff: '@@ -42,1 +42,1 @@\n-<div>{user.bio}</div>\n+<div>{escape(user.bio)}</div>'
+//       }
+//     }
+//   ],
+//   durationMs: 8420,
+//   usage: {
+//     inputTokens: 12500,
+//     outputTokens: 890,
+//     cacheReadInputTokens: 4200,
+//     costUSD: 0.0234
+//   },
+//   auxiliaryUsage: {
+//     'semantic-dedup': {
+//       inputTokens: 450,
+//       outputTokens: 12,
+//       costUSD: 0.0008
+//     }
+//   },
+//   files: [
+//     {
+//       filename: 'src/views/profile.tsx',
+//       findingCount: 1,
+//       durationMs: 2100,
+//       usage: {
+//         inputTokens: 3200,
+//         outputTokens: 210,
+//         costUSD: 0.0067
+//       }
+//     }
+//   ],
+//   failedHunks: 0,
+//   failedExtractions: 0,
+//   model: 'claude-sonnet-4-20250514'
+// }
+```
+
+---
+
+## Validation
+
+All report types are validated at runtime using Zod schemas:
+
+```typescript
+import {
+  SkillReportSchema,
+  FileReportSchema,
+  UsageStatsSchema,
+  SkippedFileSchema
+} from '@sentry/warden';
+
+// Parse and validate a skill report
+const validated = SkillReportSchema.parse(rawReport);
+
+// Safe parse with error handling
+const result = SkillReportSchema.safeParse(rawReport);
+if (!result.success) {
+  console.error('Invalid report:', result.error);
+}
+```
+
+<Note>
+  Warden uses these schemas internally to ensure all skill reports conform to the expected structure. Skills that return invalid data will cause analysis to fail with detailed validation errors.
+</Note>

@@ -1,0 +1,418 @@
+---
+title: 'Creating Skills'
+description: 'Step-by-step guide to writing effective Warden skills'
+---
+
+## Prerequisites
+
+Before creating a skill:
+
+- Understand the issue you want to detect (specific bug patterns, architectural problems, security flaws)
+- Have example code that demonstrates the issue
+- Know what context the skill needs to make accurate judgments
+
+## Quick Start
+
+Create a skill in three steps:
+
+<Steps>
+  <Step title="Create the skill directory">
+    ```bash
+    mkdir -p .agents/skills/my-skill
+    ```
+  </Step>
+  
+  <Step title="Write SKILL.md">
+    ```bash
+    touch .agents/skills/my-skill/SKILL.md
+    ```
+  </Step>
+  
+  <Step title="Add to warden.toml">
+    ```toml
+    [[skills]]
+    name = "my-skill"
+    
+    [[skills.triggers]]
+    type = "pull_request"
+    actions = ["opened", "synchronize"]
+    ```
+  </Step>
+</Steps>
+
+## Skill Template
+
+Start with this template:
+
+```markdown .agents/skills/my-skill/SKILL.md
+---
+name: my-skill
+description: "Brief one-line description for discovery"
+allowed-tools: Read Grep Glob
+---
+
+You are an expert [domain] analyzer.
+
+## Scope
+
+You receive code chunks from diffs. Analyze each chunk against the checks below.
+
+## Checks
+
+### Check 1: [Specific Pattern]
+
+**What to look for:**
+- Concrete code pattern 1
+- Concrete code pattern 2
+
+**Red flags:**
+- Accessing X without checking Y
+- Using Z when condition W is not met
+
+**Safe patterns:**
+- Using helper function `foo()` which handles edge cases
+- Explicit check before operation
+
+**Not a bug:**
+- False positive clarifications
+
+---
+
+### Check 2: [Another Pattern]
+
+[Same structure as Check 1]
+
+## Report Format
+
+For each finding:
+- File path and line number
+- Which check it matches
+- One sentence: what is wrong
+- Why it matters (trigger condition, failure mode)
+- Suggested fix (only if obvious)
+
+### Zero findings
+
+If no checks fire, report nothing. Silence means the code is clean.
+
+## Severity Levels
+
+- **high**: Will cause incorrect behavior, data loss, or crash in normal usage
+- **medium**: Incorrect behavior requiring specific conditions
+- **low**: Minor issues or style concerns
+```
+
+## Real Example: SQL Injection Detection
+
+Let's build a skill that detects SQL injection vulnerabilities.
+
+<Steps>
+  <Step title="Define the pattern">
+    We want to catch:
+    - String concatenation in SQL queries
+    - User input passed directly to query functions
+    - Missing parameterization
+  </Step>
+  
+  <Step title="Write the skill">
+    ```markdown .agents/skills/check-sql-injection/SKILL.md
+    ---
+    name: check-sql-injection
+    description: "Detect SQL injection vulnerabilities from improper query construction"
+    allowed-tools: Read Grep Glob
+    ---
+    
+    You are a security-focused code reviewer specialized in SQL injection detection.
+    
+    ## Scope
+    
+    Analyze code for SQL injection vulnerabilities. Focus on database query construction.
+    
+    ## Check: SQL Injection via String Concatenation
+    
+    **Red flags:**
+    - String concatenation or template literals building SQL with user input: `query = "SELECT * FROM users WHERE id = " + userId`
+    - `.format()` or `f-strings` interpolating variables into SQL
+    - User-controlled values in `WHERE`, `ORDER BY`, `LIMIT` clauses without parameterization
+    - Raw SQL execution functions receiving concatenated strings
+    
+    **Safe patterns:**
+    - Parameterized queries: `db.query('SELECT * FROM users WHERE id = ?', [userId])`
+    - ORM methods with bound parameters: `User.findOne({ id: userId })`
+    - Query builders with parameter binding: `knex('users').where('id', userId)`
+    - Hardcoded SQL strings without user input
+    
+    **Not a bug:**
+    - Concatenation of hardcoded SQL fragments (table names, column names from constants)
+    - Logging or error messages containing SQL (not executed)
+    - SQL in comments or documentation
+    
+    ## Report Format
+    
+    For each vulnerability:
+    - File path and line number
+    - The vulnerable code line
+    - What user input flows into the query
+    - Why parameterization is needed
+    - How to fix (show parameterized version)
+    
+    ## Severity
+    
+    - **critical**: User input directly concatenated into executed SQL
+    - **high**: Indirect flow of user input into SQL without validation
+    - **medium**: User input with basic sanitization (still vulnerable)
+    ```
+  </Step>
+  
+  <Step title="Test the skill">
+    Create test files with vulnerable patterns:
+    
+    ```typescript test.ts
+    // Vulnerable - should trigger
+    const userId = req.params.id;
+    const query = `SELECT * FROM users WHERE id = ${userId}`;
+    db.query(query);
+    
+    // Safe - should not trigger
+    const result = db.query('SELECT * FROM users WHERE id = ?', [userId]);
+    ```
+    
+    Run Warden locally:
+    ```bash
+    warden run --skill check-sql-injection
+    ```
+  </Step>
+  
+  <Step title="Iterate and refine">
+    Based on results:
+    - Add more patterns to catch variants
+    - Refine "safe patterns" to reduce false positives
+    - Adjust severity based on real impact
+  </Step>
+</Steps>
+
+## Writing Effective Checks
+
+### Be Specific
+
+<Accordion title="Good vs Bad specificity">
+  **Too vague:**
+  ```
+  Check for improper error handling
+  ```
+  
+  **Too specific:**
+  ```
+  Check if error at line 42 of auth.ts is caught
+  ```
+  
+  **Just right:**
+  ```
+  Check if async functions catch promise rejections.
+  Red flags:
+  - Async function without try/catch
+  - Promise chain without .catch()
+  - await without surrounding try/catch
+  ```
+</Accordion>
+
+### Provide Examples
+
+Show what triggers the check and what doesn't:
+
+```markdown
+**Red flags:**
+- `response.content[0]` without checking array length
+- `msg.usage.input_tokens` without null check
+
+**Safe patterns:**
+- `response.content[0] ?? defaultBlock`
+- Checking `response.content.length > 0` first
+```
+
+### Explain Impact
+
+Help the user understand why it matters:
+
+```markdown
+**Trigger**: When the API returns an empty content array, accessing `[0]` throws TypeError, crashing the application.
+```
+
+### Calibrate Confidence
+
+Set clear thresholds for reporting:
+
+```markdown
+## Confidence Calibration
+
+| Level | Criteria | Action |
+|-------|----------|--------|
+| HIGH | Pattern traced to specific code, confirmed triggerable | Report |
+| MEDIUM | Pattern present, but context may mitigate | Read more context, then decide |
+| LOW | Vague resemblance | Do NOT report |
+
+When in doubt, read more files. Never guess.
+```
+
+## Advanced Patterns
+
+### Multi-Step Analysis
+
+For complex checks, guide the agent through steps:
+
+```markdown
+## Step 1: Classify the Code
+
+Identify which architectural zone(s) the code touches:
+- SDK layer (`src/sdk/`)
+- Config layer (`src/config/`)
+- Output layer (`src/output/`)
+
+Only run checks relevant to the touched zones.
+
+## Step 2: Run Checks
+
+### Check 1: SDK Response Handling
+(Only if SDK layer is touched)
+...
+
+## Step 3: Report
+
+For each finding:
+...
+```
+
+### Historical Context
+
+Reference past bugs to sharpen detection:
+
+```markdown
+### Check 2: Config Threading
+
+**Historical commits:** 8+
+
+Config flows through a 3-level merge chain. Breaking this chain causes silent feature failure.
+
+**Red flags:**
+- New config field not threaded through `resolveSkillConfigs()`
+- Using `||` instead of `??` when 0/false are valid values
+...
+```
+
+### Zone-Based Scoping
+
+Skip irrelevant checks based on file paths:
+
+```markdown
+## Step 1: Classify the Code
+
+Before running checks, identify which zones the code touches:
+- **SDK layer** (`src/sdk/`): Response parsing, IPC
+- **CLI layer** (`src/cli/`): Task orchestration, rendering
+
+Only run checks relevant to the touched zones.
+```
+
+## Testing Skills
+
+### Local Testing
+
+Test against specific files:
+
+```bash
+# Run on staged changes
+warden run --skill my-skill
+
+# Run on specific diff
+git diff main | warden run --skill my-skill --stdin
+
+# Run on specific files
+warden run --skill my-skill --files src/problematic.ts
+```
+
+### Create Fixtures
+
+Build a test suite for your skill:
+
+```
+.agents/skills/my-skill/
+├── SKILL.md
+└── fixtures/
+    ├── vulnerable.ts     # Should trigger finding
+    ├── safe.ts          # Should not trigger
+    └── edge-case.ts     # Tricky case
+```
+
+### Iterate on Real Code
+
+Run the skill on your actual codebase:
+
+```bash
+# Full repo scan
+warden run --skill my-skill --schedule
+
+# Check recent PRs
+gh pr list --limit 5 | while read pr; do
+  gh pr diff $pr | warden run --skill my-skill --stdin
+done
+```
+
+## Common Pitfalls
+
+<Warning>
+**Avoid these anti-patterns when writing skills:**
+
+1. **Too generic**: "Check for bugs" → Specify exactly what constitutes a bug
+2. **Style preferences**: Skills should find correctness issues, not enforce formatting
+3. **False positive factories**: Add "safe patterns" and "not a bug" sections
+4. **No severity guidance**: Define what makes an issue high vs medium vs low
+5. **Implicit context**: Don't assume the agent knows your codebase—explain patterns
+</Warning>
+
+## Prompt Engineering Tips
+
+### Role Framing
+
+Set the right persona:
+
+```markdown
+✅ "You are an expert bug hunter who knows Warden's architecture intimately."
+❌ "You are a helpful assistant."
+```
+
+### Structured Output
+
+Guide the report format:
+
+```markdown
+For each finding:
+- File path and line number
+- Which check (1-9) it matches
+- One sentence: what is wrong
+- Trigger: specific condition that causes failure
+- Suggested fix (only if clear)
+
+### Zero findings
+
+If no checks fire, report nothing. Do not invent findings.
+```
+
+### Calibrated Confidence
+
+Prevent noise:
+
+```markdown
+Do NOT report low severity findings. If confidence is that low, don't report it.
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skill Structure" icon="file-code" href="/skills/skill-structure">
+    Deep dive into SKILL.md format and conventions
+  </Card>
+  
+  <Card title="Builtin Skills" icon="books" href="/skills/builtin-skills">
+    Study real examples from Warden's builtin skills
+  </Card>
+</CardGroup>

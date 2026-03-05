@@ -1,0 +1,268 @@
+---
+title: 'Finding'
+description: 'Issue detection and fix suggestion types'
+icon: 'magnifying-glass-chart'
+---
+
+## Finding
+
+A single issue detected by a skill during code analysis.
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the finding. Generated automatically using a short alphanumeric format (e.g., `"sec_xss_42a"`).
+</ResponseField>
+
+<ResponseField name="severity" type="Severity" required>
+  Severity level: `"high"`, `"medium"`, or `"low"`
+  
+  Determines urgency and filtering behavior. See [Severity](#severity) for ordering rules.
+</ResponseField>
+
+<ResponseField name="confidence" type="Confidence" default="undefined">
+  Confidence level: `"high"`, `"medium"`, or `"low"`
+  
+  How certain the skill is about this finding. Used for filtering low-confidence results.
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  Brief title summarizing the issue (e.g., `"SQL injection vulnerability in user query"`)
+</ResponseField>
+
+<ResponseField name="description" type="string" required>
+  Detailed explanation of the issue, including context and impact
+</ResponseField>
+
+<ResponseField name="verification" type="string" default="undefined">
+  Steps to verify the issue manually or programmatically
+</ResponseField>
+
+<ResponseField name="location" type="Location" default="undefined">
+  Primary location of the finding in the codebase
+</ResponseField>
+
+<ResponseField name="additionalLocations" type="Location[]" default="undefined">
+  Related locations (e.g., all places where a vulnerable pattern appears)
+</ResponseField>
+
+<ResponseField name="suggestedFix" type="SuggestedFix" default="undefined">
+  Proposed fix with unified diff format
+</ResponseField>
+
+<ResponseField name="elapsedMs" type="number" default="undefined">
+  Time taken to generate this finding in milliseconds (must be non-negative)
+</ResponseField>
+
+---
+
+## Location
+
+Specifies where a finding occurs in the codebase.
+
+<ResponseField name="path" type="string" required>
+  File path relative to repository root (e.g., `"src/auth/login.ts"`)
+</ResponseField>
+
+<ResponseField name="startLine" type="number" required>
+  Starting line number (1-indexed, must be positive)
+</ResponseField>
+
+<ResponseField name="endLine" type="number" default="undefined">
+  Ending line number (1-indexed, must be positive). If omitted, defaults to `startLine`.
+</ResponseField>
+
+---
+
+## SuggestedFix
+
+A proposed code change to resolve a finding.
+
+<ResponseField name="description" type="string" required>
+  Human-readable explanation of what the fix does and why it resolves the issue
+</ResponseField>
+
+<ResponseField name="diff" type="string" required>
+  Unified diff format showing the change:
+  
+  ```diff
+  @@ -42,3 +42,3 @@
+  -const query = `SELECT * FROM users WHERE id = ${userId}`;
+  +const query = db.prepare('SELECT * FROM users WHERE id = ?');
+  +const result = query.get(userId);
+  ```
+</ResponseField>
+
+<Note>
+  Warden can automatically apply suggested fixes using `--apply-fixes` or generate PRs with fixes using schedule triggers.
+</Note>
+
+---
+
+## Severity
+
+Severity levels for findings.
+
+```typescript
+type Severity = 'high' | 'medium' | 'low';
+```
+
+### Severity Ordering
+
+Warden uses consistent ordering for filtering and comparison:
+
+```typescript
+import { SEVERITY_ORDER, filterFindingsBySeverity } from '@sentry/warden';
+
+console.log(SEVERITY_ORDER);
+// { high: 0, medium: 1, low: 2 }
+// Lower number = more severe
+
+// Filter to only high and medium severity
+const filtered = filterFindingsBySeverity(findings, 'medium');
+```
+
+### Backward Compatibility
+
+Warden normalizes legacy severity values:
+- `"critical"` → `"high"` (for old JSONL logs)
+- `"info"` → `"low"` (for old LLM responses)
+
+<Note>
+  Skills should only use the three-level scale (`high`, `medium`, `low`). The normalization exists for backward compatibility with historical data.
+</Note>
+
+---
+
+## Confidence
+
+Confidence levels indicate how certain a skill is about a finding.
+
+```typescript
+type Confidence = 'high' | 'medium' | 'low';
+```
+
+### Confidence Ordering
+
+```typescript
+import { CONFIDENCE_ORDER, filterFindingsByConfidence } from '@sentry/warden';
+
+console.log(CONFIDENCE_ORDER);
+// { high: 0, medium: 1, low: 2 }
+// Lower number = more confident
+
+// Filter out low-confidence findings
+const filtered = filterFindingsByConfidence(findings, 'medium');
+```
+
+### Configuration
+
+Control confidence filtering in `warden.toml`:
+
+```toml
+[defaults]
+minConfidence = "medium"  # Filter out low-confidence findings
+
+[[skills]]
+name = "security-audit"
+minConfidence = "high"    # Override for this skill
+```
+
+---
+
+## Example: Complete Finding
+
+```typescript
+import type { Finding } from '@sentry/warden';
+
+const finding: Finding = {
+  id: 'sec_sqli_7f2',
+  severity: 'high',
+  confidence: 'high',
+  title: 'SQL injection vulnerability in user query',
+  description: `The user ID is interpolated directly into the SQL query without sanitization. 
+An attacker can manipulate the userId parameter to execute arbitrary SQL commands, 
+potentially exposing or modifying sensitive data.`,
+  verification: 'Try passing userId="1 OR 1=1" to retrieve all user records',
+  location: {
+    path: 'src/auth/login.ts',
+    startLine: 42,
+    endLine: 43
+  },
+  suggestedFix: {
+    description: 'Use parameterized queries to prevent SQL injection',
+    diff: `@@ -42,2 +42,3 @@
+-const query = \`SELECT * FROM users WHERE id = \${userId}\`;
+-const user = db.get(query);
++const query = db.prepare('SELECT * FROM users WHERE id = ?');
++const user = query.get(userId);
+`
+  },
+  elapsedMs: 1847
+};
+```
+
+---
+
+## Filtering and Comparison
+
+Warden provides utilities for working with findings:
+
+### Filter by Severity and Confidence
+
+```typescript
+import { filterFindings } from '@sentry/warden';
+
+// Apply both severity and confidence filters
+const filtered = filterFindings(
+  findings,
+  'medium',  // reportOn: include medium and high severity
+  'medium'   // minConfidence: include medium and high confidence
+);
+```
+
+### Compare Finding Priority
+
+```typescript
+import { compareFindingPriority } from '@sentry/warden';
+
+// Sort findings by priority
+// Higher severity > higher confidence > earlier file path > earlier line number
+const sorted = findings.sort(compareFindingPriority);
+```
+
+### Get Effective Line Number
+
+```typescript
+import { findingLine } from '@sentry/warden';
+
+// Returns endLine if present, otherwise startLine, otherwise 0
+const line = findingLine(finding);
+```
+
+---
+
+## Validation
+
+All finding types use Zod schemas for runtime validation:
+
+```typescript
+import {
+  FindingSchema,
+  LocationSchema,
+  SuggestedFixSchema,
+  SeveritySchema,
+  ConfidenceSchema
+} from '@sentry/warden';
+
+// Parse and validate a finding
+const validated = FindingSchema.parse(rawFinding);
+
+// Safe parse with error handling
+const result = FindingSchema.safeParse(rawFinding);
+if (!result.success) {
+  console.error('Invalid finding:', result.error);
+}
+```
+
+<Note>
+  Skills must return findings that conform to the `FindingSchema`. Invalid findings will cause analysis to fail with detailed validation errors.
+</Note>

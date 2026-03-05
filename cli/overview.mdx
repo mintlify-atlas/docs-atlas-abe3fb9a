@@ -1,0 +1,367 @@
+---
+title: "CLI Overview"
+description: "Complete guide to Warden's command-line interface"
+---
+
+## Commands
+
+Warden provides several commands for different workflows:
+
+<CardGroup cols={2}>
+  <Card title="warden" icon="terminal" href="/cli/analyze">
+    Main command - analyze code for issues
+  </Card>
+  <Card title="warden init" icon="file-circle-plus" href="/cli/init">
+    Initialize Warden in your repository
+  </Card>
+  <Card title="warden --fix" icon="wrench" href="/cli/fix">
+    Apply suggested fixes automatically
+  </Card>
+  <Card title="warden logs" icon="list" href="/cli/logs">
+    Manage analysis logs and history
+  </Card>
+  <Card title="warden add" icon="plus" href="/cli/add">
+    Add skills to your configuration
+  </Card>
+  <Card title="warden sync" icon="arrows-rotate" href="/cli/sync">
+    Update remote skill definitions
+  </Card>
+  <Card title="warden setup-app" icon="github" href="/cli/setup-app">
+    Configure GitHub App integration
+  </Card>
+</CardGroup>
+
+## Common Patterns
+
+### Analyze uncommitted changes
+
+The most common workflow - analyze files you've modified:
+
+```bash
+npx warden
+```
+
+This analyzes:
+- Unstaged changes (modified files not added to git)
+- Staged changes (files added but not committed)
+
+### Analyze specific files
+
+Target specific files or directories:
+
+```bash
+# Single file
+npx warden src/api/users.ts
+
+# Directory
+npx warden src/api/
+
+# Multiple targets
+npx warden src/api/ src/utils/auth.ts
+
+# Glob patterns
+npx warden 'src/**/*.ts'
+```
+
+### Analyze git diffs
+
+Compare branches or commits:
+
+```bash
+# Compare with main branch
+npx warden main..HEAD
+
+# Compare two commits
+npx warden abc1234..def5678
+
+# Compare with a branch
+npx warden origin/main..feature-branch
+```
+
+### Apply fixes automatically
+
+Review and apply suggested fixes:
+
+```bash
+# Interactive mode - review each fix
+npx warden --fix
+
+# Auto-apply all fixes
+npx warden --fix --yes
+
+# Combine with targets
+npx warden --fix src/api/
+```
+
+### Control output verbosity
+
+Adjust how much Warden prints:
+
+```bash
+# Quiet mode - only errors
+npx warden --quiet
+
+# Normal mode (default)
+npx warden
+
+# Verbose mode - show progress
+npx warden --verbose
+
+# Debug mode - show everything
+npx warden --debug
+```
+
+### Output formats
+
+Export findings in different formats:
+
+```bash
+# JSON output
+npx warden --json
+
+# JSONL (one finding per line)
+npx warden --output findings.jsonl
+
+# Both terminal and file
+npx warden --output findings.jsonl --verbose
+```
+
+## Global Options
+
+These options work with all commands:
+
+### --help, -h
+
+Show help for any command:
+
+```bash
+warden --help
+warden init --help
+warden logs --help
+```
+
+### --version, -v
+
+Show the installed version:
+
+```bash
+warden --version
+```
+
+### --config
+
+Use a custom config file:
+
+```bash
+warden --config ./configs/strict.toml
+```
+
+Default: `warden.toml` in the repo root.
+
+### --no-color
+
+Disable colored output:
+
+```bash
+warden --no-color
+```
+
+Useful for CI environments or when piping output.
+
+## Exit Codes
+
+Warden uses these exit codes:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success - no failures above threshold |
+| `1` | Failure - findings exceed `failOn` threshold |
+| `130` | User aborted (Ctrl+C) |
+
+Use exit codes in scripts:
+
+```bash
+if npx warden; then
+  echo "✓ Passed"
+else
+  echo "✗ Failed"
+  exit 1
+fi
+```
+
+## Environment Variables
+
+### ANTHROPIC_API_KEY
+
+Anthropic API key for authentication:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+npx warden
+```
+
+### WARDEN_ANTHROPIC_API_KEY
+
+Warden-specific API key (takes precedence):
+
+```bash
+export WARDEN_ANTHROPIC_API_KEY=sk-ant-...
+npx warden
+```
+
+### GITHUB_TOKEN
+
+GitHub token for API access:
+
+```bash
+export GITHUB_TOKEN=ghp_...
+npx warden
+```
+
+Used when analyzing pull requests or fetching remote skills.
+
+### NO_COLOR
+
+Disable colored output:
+
+```bash
+export NO_COLOR=1
+npx warden
+```
+
+### WARDEN_LOG_LEVEL
+
+Set the log level:
+
+```bash
+export WARDEN_LOG_LEVEL=debug
+npx warden
+```
+
+Values: `quiet`, `normal`, `verbose`, `debug`
+
+## Configuration File
+
+The CLI reads configuration from `warden.toml` in your repository root. You can specify a different path with `--config`:
+
+```bash
+npx warden --config ./configs/strict.toml
+```
+
+See [Configuration Reference](/configuration/warden-toml) for details.
+
+## Shell Completion
+
+Warden doesn't currently provide built-in shell completion, but you can create aliases for common workflows:
+
+```bash .bashrc
+alias wf="npx warden --fix"
+alias wv="npx warden --verbose"
+alias wq="npx warden --quiet"
+```
+
+## CI/CD Integration
+
+### GitHub Actions
+
+Use the official action:
+
+```yaml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+### GitLab CI
+
+Run as a regular CLI command:
+
+```yaml
+warden:
+  script:
+    - npx warden
+  only:
+    - merge_requests
+```
+
+### Jenkins
+
+Run in a shell step:
+
+```groovy
+sh 'npx warden'
+```
+
+### CircleCI
+
+Add to your config:
+
+```yaml
+- run:
+    name: Run Warden
+    command: npx warden
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Run Warden before committing">
+    Add Warden to your pre-commit hook to catch issues early:
+
+    ```bash .husky/pre-commit
+    #!/bin/sh
+    npx warden || exit 1
+    ```
+  </Accordion>
+
+  <Accordion title="Use different configs for local vs CI">
+    Local development can be lenient, CI can be strict:
+
+    ```bash
+    # Local - show all findings
+    npx warden
+
+    # CI - fail on high severity
+    npx warden --config warden.strict.toml
+    ```
+  </Accordion>
+
+  <Accordion title="Cache analysis logs">
+    Save logs for later review:
+
+    ```bash
+    npx warden --output ./logs/$(date +%Y%m%d-%H%M%S).jsonl
+    ```
+
+    Then review with `warden logs show`.
+  </Accordion>
+
+  <Accordion title="Use targets to focus analysis">
+    Don't analyze everything - focus on changed files:
+
+    ```bash
+    # Analyze only API changes
+    npx warden src/api/
+
+    # Analyze related test files
+    npx warden src/api/ test/api/
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Main command" icon="terminal" href="/cli/analyze">
+    Learn all options for the main warden command
+  </Card>
+  <Card title="Initialize" icon="file-circle-plus" href="/cli/init">
+    Set up Warden in your repository
+  </Card>
+  <Card title="Auto-fix" icon="wrench" href="/cli/fix">
+    Apply suggested fixes automatically
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/warden-toml">
+    Configure Warden's behavior
+  </Card>
+</CardGroup>

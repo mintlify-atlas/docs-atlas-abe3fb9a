@@ -1,0 +1,294 @@
+---
+title: "warden init"
+description: "Initialize Warden in your repository with configuration and workflows"
+---
+
+## Overview
+
+The `warden init` command sets up Warden in your repository by creating:
+
+- `warden.toml` - Configuration file with example skills
+- `.github/workflows/warden.yml` - GitHub Actions workflow
+- `.agents/skills/` - Directory for custom skills (optional)
+
+## Usage
+
+```bash
+npx warden init
+```
+
+## Interactive Setup
+
+The init command runs interactively by default:
+
+```bash
+$ npx warden init
+
+🔧 Initializing Warden in your repository...
+
+✓ Created warden.toml
+✓ Created .github/workflows/warden.yml
+✓ Created .agents/skills/ directory
+
+Next steps:
+  1. Add your ANTHROPIC_API_KEY to GitHub Secrets
+  2. Customize warden.toml for your project
+  3. Run 'npx warden' to analyze your code
+```
+
+## Generated Files
+
+### warden.toml
+
+A basic configuration file is created:
+
+```toml warden.toml
+version = 1
+
+[defaults]
+# Fail CI on high+ severity findings
+failOn = "high"
+# Show annotations for medium+ severity
+reportOn = "medium"
+
+[[skills]]
+name = "code-quality"
+paths = ["src/**"]
+
+[[skills.triggers]]
+type = "local"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+```
+
+You can customize this file after creation. See [Configuration Guide](/configuration/warden-toml).
+
+### .github/workflows/warden.yml
+
+A GitHub Actions workflow is created:
+
+```yaml .github/workflows/warden.yml
+name: Warden
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  warden:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: getsentry/warden@v1
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+This workflow:
+- Runs on all PR events
+- Requires `ANTHROPIC_API_KEY` secret
+- Posts findings as PR comments
+
+### .agents/skills/
+
+An empty directory for custom skills:
+
+```
+.agents/
+└── skills/
+    └── (your custom skills here)
+```
+
+Add your own skills here. See [Creating Skills](/skills/creating-skills).
+
+## Options
+
+### --force
+
+Overwrite existing files:
+
+```bash
+npx warden init --force
+```
+
+<Warning>
+This overwrites `warden.toml` and `.github/workflows/warden.yml` without confirmation.
+</Warning>
+
+### --skip-workflow
+
+Skip creating the GitHub Actions workflow:
+
+```bash
+npx warden init --skip-workflow
+```
+
+Useful if you're only using Warden locally or have a custom CI setup.
+
+### --skip-skills-dir
+
+Skip creating the `.agents/skills/` directory:
+
+```bash
+npx warden init --skip-skills-dir
+```
+
+## Next Steps
+
+<Steps>
+  <Step title="Add API key to GitHub Secrets">
+    Go to your repository **Settings → Secrets and variables → Actions** and add `ANTHROPIC_API_KEY`.
+  </Step>
+
+  <Step title="Customize warden.toml">
+    Edit the generated config to match your project:
+
+    ```toml warden.toml
+    [[skills]]
+    name = "security-audit"
+    paths = ["src/**/*.ts"]
+    ignorePaths = ["**/*.test.ts"]
+    failOn = "medium"
+    ```
+  </Step>
+
+  <Step title="Run your first analysis">
+    Test Warden locally:
+
+    ```bash
+    npx warden
+    ```
+  </Step>
+
+  <Step title="Open a pull request">
+    Create a PR to see Warden in action on GitHub.
+  </Step>
+</Steps>
+
+## Examples
+
+### Initialize with custom config
+
+Create a minimal config:
+
+```bash
+$ npx warden init
+$ cat warden.toml
+```
+
+Then customize:
+
+```toml warden.toml
+version = 1
+
+[defaults]
+failOn = "high"
+reportOn = "low"
+ignorePaths = ["dist/**", "node_modules/**"]
+
+[[skills]]
+name = "find-bugs"
+paths = ["src/**/*.ts"]
+model = "claude-sonnet-4-20250514"
+
+[[skills.triggers]]
+type = "local"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+failOn = "medium"
+```
+
+### Initialize in monorepo
+
+For monorepos, initialize at the root:
+
+```bash
+cd packages/api
+npx warden init
+```
+
+Customize paths:
+
+```toml warden.toml
+[[skills]]
+name = "code-quality"
+paths = ["packages/api/src/**"]
+```
+
+### Initialize without GitHub integration
+
+Skip workflow creation:
+
+```bash
+npx warden init --skip-workflow
+```
+
+Use in other CI systems:
+
+```yaml .gitlab-ci.yml
+warden:
+  script:
+    - npx warden
+  only:
+    - merge_requests
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="init fails with 'warden.toml already exists'">
+    Use `--force` to overwrite:
+
+    ```bash
+    npx warden init --force
+    ```
+
+    Or manually remove the file:
+
+    ```bash
+    rm warden.toml
+    npx warden init
+    ```
+  </Accordion>
+
+  <Accordion title="Workflow not running on PRs">
+    Verify:
+    1. `.github/workflows/warden.yml` exists
+    2. Workflow is enabled in **Actions** tab
+    3. `ANTHROPIC_API_KEY` secret is set
+    4. Workflow has required permissions
+  </Accordion>
+
+  <Accordion title="Want to add more skills after init">
+    Use `warden add` to add skills:
+
+    ```bash
+    npx warden add
+    ```
+
+    Or edit `warden.toml` manually.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration/warden-toml">
+    Complete warden.toml reference
+  </Card>
+  <Card title="Add skills" icon="plus" href="/cli/add">
+    Add more skills after init
+  </Card>
+  <Card title="GitHub Action setup" icon="github" href="/github-action/setup">
+    Advanced workflow configuration
+  </Card>
+  <Card title="Creating skills" icon="wand-magic-sparkles" href="/skills/creating-skills">
+    Write custom skills
+  </Card>
+</CardGroup>

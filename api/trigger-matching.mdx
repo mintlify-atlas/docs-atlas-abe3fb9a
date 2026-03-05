@@ -1,0 +1,518 @@
+---
+title: Trigger Matching
+description: Filter skills by event type, actions, and path patterns
+---
+
+Warden's trigger matching system determines which skills should run for a given event context and environment.
+
+## matchTrigger()
+
+Check if a trigger matches the given event context and environment.
+
+### Function Signature
+
+```typescript
+function matchTrigger(
+  trigger: ResolvedTrigger,
+  context: EventContext,
+  environment?: TriggerType | 'github'
+): boolean
+```
+
+<ParamField path="trigger" type="ResolvedTrigger" required>
+  Resolved trigger from [`resolveSkillConfigs()`](/api/config-loading#resolveskillconfigs).
+</ParamField>
+
+<ParamField path="context" type="EventContext" required>
+  Event context from [`buildEventContext()`](/api/event-context).
+</ParamField>
+
+<ParamField path="environment" type="TriggerType | 'github'">
+  Execution environment:
+  - `'github'` - GitHub Actions/webhook
+  - `'local'` - CLI local mode
+  - `undefined` - Auto-detect
+</ParamField>
+
+### Returns
+
+<ResponseField name="boolean" type="boolean">
+  `true` if the trigger matches the context and environment, `false` otherwise.
+</ResponseField>
+
+### Matching Rules
+
+#### Wildcard Triggers (`type: '*'`)
+
+Match all environments and events, only check path filters:
+
+```typescript
+const trigger = {
+  type: '*',
+  filters: { paths: ['**/*.ts'] },
+};
+
+matchTrigger(trigger, context); // true if context has .ts files
+```
+
+#### Local Triggers (`type: 'local'`)
+
+Only match in local environment:
+
+```typescript
+const trigger = { type: 'local' };
+
+matchTrigger(trigger, context, 'local');   // true
+matchTrigger(trigger, context, 'github');  // false
+```
+
+#### Pull Request Triggers (`type: 'pull_request'`)
+
+In GitHub environment:
+- Event type must be `'pull_request'`
+- Action must match one of `trigger.actions`
+
+In local environment:
+- Always matches (skip event/action checks)
+- Only path filters apply
+
+```typescript
+const trigger = {
+  type: 'pull_request',
+  actions: ['opened', 'synchronize'],
+};
+
+// GitHub environment
+const prContext = { eventType: 'pull_request', action: 'opened' };
+matchTrigger(trigger, prContext, 'github');  // true
+
+// Local environment (always matches, regardless of action)
+matchTrigger(trigger, prContext, 'local');   // true
+```
+
+#### Schedule Triggers (`type: 'schedule'`)
+
+Only match when:
+- Event type is `'schedule'`
+- Context has at least one file change
+
+```typescript
+const trigger = { type: 'schedule' };
+
+const scheduleContext = {
+  eventType: 'schedule',
+  pullRequest: { files: [{ filename: 'src/index.ts' }] },
+};
+
+matchTrigger(trigger, scheduleContext);  // true
+```
+
+### Example: Filter Triggers
+
+```typescript
+import { 
+  loadWardenConfig,
+  resolveSkillConfigs,
+  buildEventContext,
+  matchTrigger,
+} from '@sentry/warden';
+
+const config = loadWardenConfig(repoPath);
+const allTriggers = resolveSkillConfigs(config);
+
+const context = await buildEventContext(
+  'pull_request',
+  webhookPayload,
+  repoPath,
+  octokit
+);
+
+// Filter to matching triggers
+const matchedTriggers = allTriggers.filter(trigger =>
+  matchTrigger(trigger, context, 'github')
+);
+
+console.log(`Running ${matchedTriggers.length} skills`);
+```
+
+---
+
+## matchGlob()
+
+Match a file path against a glob pattern.
+
+### Function Signature
+
+```typescript
+function matchGlob(pattern: string, path: string): boolean
+```
+
+<ParamField path="pattern" type="string" required>
+  Glob pattern with support for:
+  - `*` - Match anything except `/`
+  - `**` - Match anything including `/`
+  - `**/` - Match zero or more directories
+  - `?` - Match single character except `/`
+</ParamField>
+
+<ParamField path="path" type="string" required>
+  File path to test against the pattern.
+</ParamField>
+
+### Returns
+
+<ResponseField name="boolean" type="boolean">
+  `true` if the path matches the pattern, `false` otherwise.
+</ResponseField>
+
+### Examples
+
+```typescript
+import { matchGlob } from '@sentry/warden';
+
+// ** matches any depth
+matchGlob('**/*.ts', 'src/index.ts');           // true
+matchGlob('**/*.ts', 'src/utils/helper.ts');    // true
+matchGlob('**/*.ts', 'index.js');               // false
+
+// **/ matches zero or more directories
+matchGlob('**/test/**', 'test/index.ts');       // true
+matchGlob('**/test/**', 'src/test/unit.ts');    // true
+matchGlob('**/test/**', 'src/index.ts');        // false
+
+// * matches within directory
+matchGlob('src/*.ts', 'src/index.ts');          // true
+matchGlob('src/*.ts', 'src/utils/helper.ts');   // false
+
+// ? matches single character
+matchGlob('src/?.ts', 'src/a.ts');              // true
+matchGlob('src/?.ts', 'src/ab.ts');             // false
+```
+
+### Performance
+
+Patterns are compiled to regex and cached with LRU eviction (max 1000 entries):
+
+```typescript
+import { getGlobCacheSize, clearGlobCache } from '@sentry/warden';
+
+console.log(`Cache size: ${getGlobCacheSize()}`);
+clearGlobCache();  // Useful for testing
+```
+
+---
+
+## filterContextByPaths()
+
+Return a copy of the context with only files matching the path filters.
+
+### Function Signature
+
+```typescript
+function filterContextByPaths(
+  context: EventContext,
+  filters: { paths?: string[]; ignorePaths?: string[] }
+): EventContext
+```
+
+<ParamField path="context" type="EventContext" required>
+  Event context to filter.
+</ParamField>
+
+<ParamField path="filters" type="object" required>
+  Path filter configuration:
+  - `paths` - Include patterns (all must match at least one file)
+  - `ignorePaths` - Exclude patterns (files matching any are excluded)
+</ParamField>
+
+### Returns
+
+<ResponseField name="EventContext" type="EventContext">
+  - If no filters, returns original context unchanged (no copy)
+  - If filters present, returns shallow copy with filtered `pullRequest.files`
+  - If no PR context, returns original unchanged
+</ResponseField>
+
+### Example
+
+```typescript
+import { buildEventContext, filterContextByPaths } from '@sentry/warden';
+
+const context = await buildEventContext(
+  eventName,
+  eventPayload,
+  repoPath,
+  octokit
+);
+
+console.log(`Total files: ${context.pullRequest?.files.length}`);
+
+// Filter to only TypeScript files, excluding tests
+const filtered = filterContextByPaths(context, {
+  paths: ['**/*.ts', '**/*.tsx'],
+  ignorePaths: ['**/test/**', '**/*.test.ts'],
+});
+
+console.log(`Filtered files: ${filtered.pullRequest?.files.length}`);
+
+// Use filtered context for analysis
+await runSkill(skill, filtered, options);
+```
+
+### Filter Logic
+
+#### Include Patterns (`paths`)
+
+A file must match **at least one** pattern:
+
+```typescript
+filterContextByPaths(context, {
+  paths: ['src/**/*.ts', 'lib/**/*.ts'],
+});
+// Includes: src/index.ts, lib/utils.ts
+// Excludes: docs/readme.md
+```
+
+#### Exclude Patterns (`ignorePaths`)
+
+A file is excluded if it matches **any** pattern:
+
+```typescript
+filterContextByPaths(context, {
+  ignorePaths: ['**/test/**', '**/*.test.ts'],
+});
+// Excludes: src/test/unit.ts, src/index.test.ts
+// Includes: src/index.ts
+```
+
+#### Combined Filters
+
+Includes are applied first, then excludes:
+
+```typescript
+filterContextByPaths(context, {
+  paths: ['**/*.ts'],
+  ignorePaths: ['**/*.test.ts'],
+});
+// Includes: src/index.ts, src/utils.ts
+// Excludes: src/index.test.ts (matched paths but also matched ignorePaths)
+```
+
+---
+
+## shouldFail()
+
+Check if a report has findings at or above the fail threshold.
+
+### Function Signature
+
+```typescript
+function shouldFail(
+  report: SkillReport,
+  failOn: SeverityThreshold
+): boolean
+```
+
+<ParamField path="report" type="SkillReport" required>
+  Skill report from [`runSkill()`](/api/run-skill).
+</ParamField>
+
+<ParamField path="failOn" type="SeverityThreshold" required>
+  Severity threshold: `'off'` | `'high'` | `'medium'` | `'low'`
+</ParamField>
+
+### Returns
+
+<ResponseField name="boolean" type="boolean">
+  - `true` if report has findings at or above threshold
+  - `false` if no blocking findings or `failOn === 'off'`
+</ResponseField>
+
+### Example
+
+```typescript
+import { runSkill, shouldFail } from '@sentry/warden';
+
+const report = await runSkill(skill, context, options);
+
+if (shouldFail(report, 'high')) {
+  console.error('High severity findings detected!');
+  process.exit(1);
+}
+```
+
+---
+
+## countFindingsAtOrAbove()
+
+Count findings at or above a severity threshold.
+
+### Function Signature
+
+```typescript
+function countFindingsAtOrAbove(
+  report: SkillReport,
+  failOn: SeverityThreshold
+): number
+```
+
+<ParamField path="report" type="SkillReport" required>
+  Skill report from [`runSkill()`](/api/run-skill).
+</ParamField>
+
+<ParamField path="failOn" type="SeverityThreshold" required>
+  Severity threshold: `'off'` | `'high'` | `'medium'` | `'low'`
+</ParamField>
+
+### Returns
+
+<ResponseField name="number" type="number">
+  Count of findings at or above threshold (0 if `failOn === 'off'`).
+</ResponseField>
+
+### Example
+
+```typescript
+import { runSkill, countFindingsAtOrAbove } from '@sentry/warden';
+
+const report = await runSkill(skill, context, options);
+
+const highCount = countFindingsAtOrAbove(report, 'high');
+const mediumCount = countFindingsAtOrAbove(report, 'medium');
+const lowCount = countFindingsAtOrAbove(report, 'low');
+
+console.log(`High: ${highCount}, Medium: ${mediumCount}, Low: ${lowCount}`);
+```
+
+---
+
+## countSeverity()
+
+Count findings of a specific severity across multiple reports.
+
+### Function Signature
+
+```typescript
+function countSeverity(
+  reports: SkillReport[],
+  severity: Severity
+): number
+```
+
+<ParamField path="reports" type="SkillReport[]" required>
+  Array of skill reports.
+</ParamField>
+
+<ParamField path="severity" type="Severity" required>
+  Exact severity to count: `'high'` | `'medium'` | `'low'`
+</ParamField>
+
+### Returns
+
+<ResponseField name="number" type="number">
+  Total count of findings with the exact severity.
+</ResponseField>
+
+### Example
+
+```typescript
+import { countSeverity } from '@sentry/warden';
+
+const reports = await Promise.all(
+  matchedTriggers.map(trigger => runSkill(skill, context))
+);
+
+const highCount = countSeverity(reports, 'high');
+const mediumCount = countSeverity(reports, 'medium');
+const lowCount = countSeverity(reports, 'low');
+
+console.log(`Total: ${highCount + mediumCount + lowCount} findings`);
+console.log(`  High: ${highCount}`);
+console.log(`  Medium: ${mediumCount}`);
+console.log(`  Low: ${lowCount}`);
+```
+
+---
+
+## Complete Example
+
+Putting it all together:
+
+```typescript
+import {
+  loadWardenConfig,
+  resolveSkillConfigs,
+  buildEventContext,
+  matchTrigger,
+  filterContextByPaths,
+  resolveSkillAsync,
+  runSkill,
+  shouldFail,
+  countFindingsAtOrAbove,
+} from '@sentry/warden';
+import { Octokit } from '@octokit/rest';
+
+// Setup
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+const repoPath = '/path/to/repo';
+
+// Load config
+const config = loadWardenConfig(repoPath);
+const allTriggers = resolveSkillConfigs(config);
+
+// Build context
+const context = await buildEventContext(
+  'pull_request',
+  webhookPayload,
+  repoPath,
+  octokit
+);
+
+// Match triggers
+const matchedTriggers = allTriggers.filter(trigger =>
+  matchTrigger(trigger, context, 'github')
+);
+
+console.log(`Matched ${matchedTriggers.length} triggers`);
+
+// Run skills
+let failed = false;
+
+for (const trigger of matchedTriggers) {
+  console.log(`Running ${trigger.name}...`);
+  
+  // Filter context by trigger's path filters
+  const filtered = filterContextByPaths(context, trigger.filters);
+  
+  if (!filtered.pullRequest?.files.length) {
+    console.log('  No matching files, skipping');
+    continue;
+  }
+  
+  // Load and run skill
+  const skill = await resolveSkillAsync(trigger.name, repoPath);
+  const report = await runSkill(skill, filtered, {
+    apiKey: process.env.WARDEN_ANTHROPIC_API_KEY,
+    model: trigger.model,
+  });
+  
+  // Check results
+  const count = countFindingsAtOrAbove(report, trigger.failOn ?? 'off');
+  console.log(`  Found ${report.findings.length} issues (${count} blocking)`);
+  
+  if (shouldFail(report, trigger.failOn ?? 'off')) {
+    failed = true;
+  }
+}
+
+if (failed) {
+  console.error('\nBlocking findings detected');
+  process.exit(1);
+}
+```
+
+## Related Functions
+
+- [`buildEventContext()`](/api/event-context) - Create event context
+- [`resolveSkillConfigs()`](/api/config-loading#resolveskillconfigs) - Get resolved triggers
+- [`runSkill()`](/api/run-skill) - Execute skill analysis

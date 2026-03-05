@@ -1,0 +1,320 @@
+---
+title: "warden setup-app"
+description: "Configure GitHub App integration for improved permissions and rate limits"
+---
+
+## Overview
+
+The `warden setup-app` command creates a GitHub App for Warden with fine-grained permissions and better rate limits compared to using `GITHUB_TOKEN`.
+
+## Usage
+
+```bash
+warden setup-app
+```
+
+## Interactive Wizard
+
+The command launches an interactive setup:
+
+```bash
+$ npx warden setup-app
+
+🔧 Setting up GitHub App for Warden...
+
+🌐 Opening GitHub in your browser...
+🔗 https://github.com/settings/apps/new?...
+
+Follow the prompts in your browser to:
+  1. Set your app name (e.g., "My Warden Bot")
+  2. Review pre-configured permissions
+  3. Create the app
+  4. Install it on your repositories
+
+Press Enter when you've completed the setup in your browser...
+```
+
+## Setup Steps
+
+<Steps>
+  <Step title="Open browser">
+    The command opens GitHub's app creation page with pre-filled settings:
+
+    - **Webhook**: Disabled
+    - **Permissions**:
+      - Repository: Contents (read), Pull requests (write), Checks (write)
+      - Account: None
+  </Step>
+
+  <Step title="Create the app">
+    In your browser:
+
+    1. Set an app name (e.g., "Warden Bot")
+    2. Review permissions (pre-configured)
+    3. Click **Create GitHub App**
+  </Step>
+
+  <Step title="Install the app">
+    After creation, you're redirected to:
+
+    1. Click **Install App**
+    2. Choose repositories:
+       - All repositories, or
+       - Selected repositories
+    3. Click **Install**
+  </Step>
+
+  <Step title="Exchange credentials">
+    Return to your terminal and press Enter.
+
+    Warden exchanges temporary credentials for an installation token:
+
+    ```
+    ✓ GitHub App created successfully!
+    ✓ App ID: 123456
+    ✓ Installation ID: 789012
+    ✓ Token saved to ~/.warden/github-app.json
+    ```
+  </Step>
+
+  <Step title="Verify setup">
+    Test the integration:
+
+    ```bash
+    npx warden
+    ```
+
+    Warden automatically uses the app credentials.
+  </Step>
+</Steps>
+
+## Benefits Over GITHUB_TOKEN
+
+<CardGroup cols={2}>
+  <Card title="Better Rate Limits" icon="gauge-high">
+    **5,000 requests/hour** vs 1,000 with `GITHUB_TOKEN`
+  </Card>
+  <Card title="Fine-Grained Permissions" icon="shield-halved">
+    Only read contents and write PRs - no repository admin access
+  </Card>
+  <Card title="Visible Attribution" icon="user">
+    PR comments show as your app (e.g., "Warden Bot") not your personal account
+  </Card>
+  <Card title="Token Refresh" icon="arrows-rotate">
+    Tokens refresh automatically - no re-authentication needed
+  </Card>
+</CardGroup>
+
+## Permissions
+
+The app requests these permissions:
+
+| Permission | Access | Purpose |
+|------------|--------|----------|
+| **Contents** | Read | Read source code and diff patches |
+| **Pull requests** | Write | Post review comments and suggestions |
+| **Checks** | Write | Create check runs with findings summary |
+
+<Note>
+Warden never modifies code or repository settings. Write access is only for PR comments and checks.
+</Note>
+
+## Stored Credentials
+
+Credentials are saved to:
+
+```
+~/.warden/github-app.json
+```
+
+Content:
+
+```json
+{
+  "appId": "123456",
+  "installationId": "789012",
+  "privateKey": "-----BEGIN RSA PRIVATE KEY-----\n...",
+  "createdAt": "2024-03-15T14:30:22Z"
+}
+```
+
+<Warning>
+Protect this file - it contains your app's private key. Never commit it to version control.
+</Warning>
+
+## Using in CI/CD
+
+After setup, the app works in both local and CI environments.
+
+### GitHub Actions
+
+No additional configuration needed:
+
+```yaml .github/workflows/warden.yml
+jobs:
+  warden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: getsentry/warden@v1
+        # No github-token needed - uses app credentials
+```
+
+### Other CI Systems
+
+Copy credentials to CI environment:
+
+1. Copy file content:
+   ```bash
+   cat ~/.warden/github-app.json
+   ```
+
+2. Set as CI secret/variable: `WARDEN_GITHUB_APP`
+
+3. In CI, write to file:
+   ```bash
+   echo "$WARDEN_GITHUB_APP" > ~/.warden/github-app.json
+   npx warden
+   ```
+
+## Updating the App
+
+To update permissions or settings:
+
+1. Go to: `https://github.com/settings/apps`
+2. Click on your app (e.g., "Warden Bot")
+3. Edit permissions under **Permissions & events**
+4. Save changes
+
+## Uninstalling
+
+To remove the app:
+
+### Remove credentials
+
+```bash
+rm ~/.warden/github-app.json
+```
+
+### Uninstall from GitHub
+
+1. Go to: `https://github.com/settings/installations`
+2. Find your app (e.g., "Warden Bot")
+3. Click **Configure**
+4. Scroll down and click **Uninstall**
+
+### Delete the app
+
+1. Go to: `https://github.com/settings/apps`
+2. Click on your app
+3. Scroll down and click **Delete GitHub App**
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Browser doesn't open">
+    Manually open the URL shown in the terminal:
+
+    ```
+    🔗 https://github.com/settings/apps/new?...
+    ```
+
+    Copy and paste into your browser.
+  </Accordion>
+
+  <Accordion title="Setup fails with 'Invalid credentials'">
+    The OAuth exchange timed out. Try again:
+
+    ```bash
+    npx warden setup-app
+    ```
+
+    Complete the browser steps within 5 minutes.
+  </Accordion>
+
+  <Accordion title="'App not installed on repository'">
+    The app isn't installed on the repo you're analyzing:
+
+    1. Go to: `https://github.com/settings/installations`
+    2. Click **Configure** on your app
+    3. Add the repository
+  </Accordion>
+
+  <Accordion title="Want to use app in multiple repos">
+    Install the app on more repositories:
+
+    1. Go to: `https://github.com/settings/installations`
+    2. Click **Configure** on your app
+    3. Select repositories to add
+    4. Save
+
+    No need to re-run `setup-app`.
+  </Accordion>
+
+  <Accordion title="Credentials not working">
+    Re-run setup to regenerate credentials:
+
+    ```bash
+    rm ~/.warden/github-app.json
+    npx warden setup-app
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Security Considerations
+
+### Protect private key
+
+The private key in `~/.warden/github-app.json` grants access to your repositories:
+
+- **Never commit** to version control
+- **Never share** publicly
+- **Rotate regularly** by creating a new app
+
+### Limit installation scope
+
+Install the app only on repositories that need Warden:
+
+1. Use **Selected repositories** during installation
+2. Add/remove repos as needed in settings
+
+### Monitor usage
+
+Review app activity:
+
+1. Go to: `https://github.com/settings/apps`
+2. Click on your app
+3. View **Advanced** → **Payload deliveries** (if webhooks enabled)
+
+## Alternative: Personal Access Token
+
+If you can't create a GitHub App, use a Personal Access Token:
+
+```bash
+export GITHUB_TOKEN=ghp_...
+npx warden
+```
+
+Limitations:
+- Lower rate limits (1,000/hour)
+- Broader permissions (repo scope)
+- Comments attributed to your personal account
+
+See [Authentication Guide](/advanced/authentication) for details.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="GitHub Action setup" icon="github" href="/github-action/setup">
+    Set up automated PR reviews
+  </Card>
+  <Card title="Authentication" icon="shield-halved" href="/advanced/authentication">
+    All authentication methods
+  </Card>
+  <Card title="Troubleshooting" icon="circle-question" href="/advanced/troubleshooting">
+    Common issues and solutions
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/warden-toml">
+    Configure Warden behavior
+  </Card>
+</CardGroup>

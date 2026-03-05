@@ -1,0 +1,563 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Warden
+---
+
+This guide covers common issues you may encounter when using Warden and how to resolve them.
+
+## Authentication Issues
+
+### Claude Code CLI Not Found
+
+**Error:**
+```
+Claude Code CLI not found on PATH.
+Either install Claude Code (https://claude.ai/install.sh) or set an API key.
+```
+
+**Solution:**
+
+<Steps>
+  <Step title="Install Claude Code CLI">
+    ```bash
+    curl https://claude.ai/install.sh | sh
+    ```
+  </Step>
+  <Step title="Verify Installation">
+    ```bash
+    claude --version
+    ```
+  </Step>
+  <Step title="Or Use API Key Instead">
+    ```bash
+    export WARDEN_ANTHROPIC_API_KEY=sk-ant-...
+    ```
+  </Step>
+</Steps>
+
+### Authentication Failed: Unauthorized
+
+**Error:**
+```
+Authentication failed: unauthorized
+```
+
+**Causes:**
+- Invalid or expired API key
+- Claude Code CLI session expired
+- API key lacks necessary permissions
+
+**Solution:**
+
+<Accordion title="For Claude Code CLI Users">
+```bash
+# Re-authenticate
+claude login
+
+# Verify authentication
+claude --version
+```
+</Accordion>
+
+<Accordion title="For API Key Users">
+```bash
+# Verify API key is set
+echo $WARDEN_ANTHROPIC_API_KEY
+
+# Test API key with curl
+curl https://api.anthropic.com/v1/messages \
+  -H "x-api-key: $WARDEN_ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-3-5-sonnet-20241022","max_tokens":10,"messages":[{"role":"user","content":"Hi"}]}'
+
+# Get new API key from console
+open https://console.anthropic.com/
+```
+</Accordion>
+
+### IPC/Subprocess Errors (EPIPE, ECONNRESET)
+
+**Error:**
+```
+Error: EPIPE
+Claude Code stderr: ...
+```
+
+**Cause:**
+The Claude Code CLI subprocess cannot communicate, often due to:
+- Docker/container sandbox restrictions
+- AppArmor/SELinux policies
+- Missing IPC capabilities
+
+**Solution:**
+
+```bash
+# Use direct API authentication in restricted environments
+export WARDEN_ANTHROPIC_API_KEY=sk-ant-...
+warden scan
+```
+
+<Warning>
+Subprocess IPC errors are not retryable. Switch to API key authentication in CI/CD and containerized environments.
+</Warning>
+
+## Analysis Issues
+
+### No Changes Found
+
+**Error:**
+```
+No changes found
+```
+
+**Causes:**
+- No uncommitted changes in working directory
+- All changes are in ignored files
+- Base reference is invalid
+
+**Solution:**
+
+<Accordion title="Check Git Status">
+```bash
+# View uncommitted changes
+git status
+git diff
+
+# View changes in specific range
+git diff main...HEAD
+```
+</Accordion>
+
+<Accordion title="Verify Base Reference">
+```bash
+# Analyze changes from specific commit
+warden scan --base=HEAD~3
+
+# Analyze all changes from main
+warden scan --base=main
+```
+</Accordion>
+
+<Accordion title="Check Ignore Patterns">
+```toml warden.toml
+[defaults]
+ignorePaths = [
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/*.test.ts",
+]
+```
+</Accordion>
+
+### Findings Extraction Failed
+
+**Error:**
+```
+⚠  2 finding extractions failed
+```
+
+**Cause:**
+Warden couldn't parse JSON findings from model output using regex or LLM fallback.
+
+**Solution:**
+
+```bash
+# Run with debug logging to see extraction details
+warden scan -vv
+```
+
+**Debug Output:**
+```
+[debug] Extraction failed: Invalid JSON
+[debug] Preview: {"findings": [{"id": "...
+[debug] Attempting LLM fallback for extraction repair
+[debug] LLM extraction: found 1 finding
+```
+
+<Note>
+Extraction failures are usually transient. Warden automatically retries with an LLM fallback (Haiku) up to 5 times.
+</Note>
+
+### Failed Hunks
+
+**Error:**
+```
+⚠  3 chunks failed to analyze
+```
+
+**Causes:**
+- API rate limits
+- Network timeouts
+- Server errors (5xx)
+
+**Solution:**
+
+<Accordion title="Enable Verbose Logging">
+```bash
+warden scan -v
+```
+
+Output:
+```
+[1/3] src/auth.ts:15-42
+  Retry attempt 1/3 after 1.0s (RateLimitError: Request rate limit exceeded)
+[1/3] src/auth.ts:15-42
+  ✗ Analysis failed after 3 retries: RateLimitError
+```
+</Accordion>
+
+<Accordion title="Increase Retry Limits">
+```typescript
+import { runSkill } from '@sentry/warden';
+
+const results = await runSkill(skill, files, {
+  retry: {
+    maxRetries: 5,
+    initialDelayMs: 2000,
+  },
+});
+```
+</Accordion>
+
+<Accordion title="Check API Status">
+```bash
+# Verify API connectivity
+curl https://api.anthropic.com/v1/messages \
+  -H "x-api-key: $WARDEN_ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-3-5-sonnet-20241022","max_tokens":10,"messages":[{"role":"user","content":"Hi"}]}'
+```
+</Accordion>
+
+## Configuration Issues
+
+### Invalid warden.toml
+
+**Error:**
+```
+Error: Failed to parse warden.toml
+Invalid value at path: skills[0].failOn
+```
+
+**Cause:**
+Configuration file syntax or validation error.
+
+**Solution:**
+
+<Accordion title="Validate Schema">
+```typescript src/config/schema.ts
+export const WardenConfigSchema = z.object({
+  version: z.literal(1),
+  defaults: DefaultsSchema.optional(),
+  skills: z.array(SkillConfigSchema).default([]),
+});
+```
+
+Valid values:
+- `failOn`: `"high"`, `"medium"`, `"low"`, `"off"`
+- `reportOn`: `"high"`, `"medium"`, `"low"`, `"off"`
+- `minConfidence`: `"high"`, `"medium"`, `"low"`, `"off"`
+</Accordion>
+
+<Accordion title="Check for Common Mistakes">
+```toml warden.toml
+# ❌ Invalid: critical is not a valid severity
+[defaults]
+failOn = "critical"
+
+# ✅ Valid: use 'high' instead
+[defaults]
+failOn = "high"
+
+# ❌ Invalid: missing version
+[defaults]
+reportOn = "medium"
+
+# ✅ Valid: version is required
+version = 1
+[defaults]
+reportOn = "medium"
+```
+</Accordion>
+
+### Duplicate Skill Names
+
+**Error:**
+```
+Error: Duplicate skill names: security-scanning
+```
+
+**Cause:**
+Multiple skills with the same name in `warden.toml`.
+
+**Solution:**
+
+```toml warden.toml
+# ❌ Duplicate names
+[[skills]]
+name = "security-scanning"
+paths = ["src/**/*.ts"]
+
+[[skills]]
+name = "security-scanning"  # Duplicate!
+paths = ["tests/**/*.ts"]
+
+# ✅ Unique names
+[[skills]]
+name = "security-scanning-src"
+paths = ["src/**/*.ts"]
+
+[[skills]]
+name = "security-scanning-tests"
+paths = ["tests/**/*.ts"]
+```
+
+### Schedule Skills Missing Paths
+
+**Error:**
+```
+Error: paths is required for skills with schedule triggers
+```
+
+**Cause:**
+Schedule-triggered skills must have explicit `paths` configuration.
+
+**Solution:**
+
+```toml warden.toml
+# ❌ Invalid: schedule skill without paths
+[[skills]]
+name = "weekly-scan"
+[[skills.triggers]]
+type = "schedule"
+
+# ✅ Valid: paths specified
+[[skills]]
+name = "weekly-scan"
+paths = ["src/**/*.ts", "lib/**/*.ts"]
+[[skills.triggers]]
+type = "schedule"
+```
+
+## Performance Issues
+
+### Analysis Taking Too Long
+
+**Symptoms:**
+- Analysis runs for several minutes
+- High token consumption
+- Large files being processed
+
+**Solution:**
+
+<Accordion title="Enable File Skipping">
+```toml warden.toml
+[defaults.chunking]
+filePatterns = [
+  { pattern = "**/package-lock.json", mode = "skip" },
+  { pattern = "**/pnpm-lock.yaml", mode = "skip" },
+  { pattern = "**/yarn.lock", mode = "skip" },
+]
+```
+</Accordion>
+
+<Accordion title="Adjust Coalescing Settings">
+```toml warden.toml
+[defaults.chunking.coalesce]
+enabled = true
+maxGapLines = 30
+maxChunkSize = 8000  # Reduce for faster processing
+```
+</Accordion>
+
+<Accordion title="Reduce Concurrency">
+```toml warden.toml
+[runner]
+concurrency = 2  # Lower value = less parallel load
+
+[defaults]
+batchDelayMs = 1000  # Add delay between batches
+```
+</Accordion>
+
+<Accordion title="Use Specific Paths">
+```bash
+# Analyze specific files only
+warden scan src/auth.ts src/api.ts
+
+# Analyze specific directory
+warden scan src/critical/
+```
+</Accordion>
+
+### Large Prompt Warnings
+
+**Warning:**
+```
+⚠  Large prompt: src/database.ts:1-500 (~25k tokens)
+```
+
+**Cause:**
+File chunk exceeds 100,000 characters (~25k tokens).
+
+**Solution:**
+
+```typescript src/sdk/types.ts
+/** Threshold in characters above which to warn about large prompts (~25k tokens) */
+export const LARGE_PROMPT_THRESHOLD_CHARS = 100000;
+```
+
+<Tip>
+Large prompts are not errors, but they increase cost and latency. Consider splitting large files or adjusting coalescing settings.
+</Tip>
+
+## GitHub Integration Issues
+
+### PR Comments Not Appearing
+
+**Symptoms:**
+- GitHub Action succeeds
+- No PR comments visible
+- Check run shows findings
+
+**Solution:**
+
+<Accordion title="Verify Permissions">
+```yaml .github/workflows/warden.yml
+permissions:
+  contents: read
+  pull-requests: write  # Required for PR comments
+  checks: write         # Required for check runs
+```
+</Accordion>
+
+<Accordion title="Check reportOn Threshold">
+Findings below `reportOn` threshold are not posted as comments:
+
+```toml warden.toml
+[defaults]
+reportOn = "high"  # Only high-severity findings in PR comments
+```
+</Accordion>
+
+<Accordion title="Enable reportOnSuccess">
+```toml warden.toml
+[defaults]
+reportOnSuccess = true  # Comment even with no findings
+```
+</Accordion>
+
+### Check Run Failures
+
+**Error:**
+```
+Error: GITHUB_TOKEN permissions are insufficient
+```
+
+**Solution:**
+
+```yaml .github/workflows/warden.yml
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write        # Add this permission
+```
+
+<Warning>
+Default `GITHUB_TOKEN` permissions may be restricted by organization settings. Contact your GitHub admin if issues persist.
+</Warning>
+
+## Debugging Tips
+
+### Enable Debug Logging
+
+```bash
+# Full diagnostic output
+warden scan -vv
+```
+
+**Debug output includes:**
+- Prompt sizes and token estimates
+- Cache hit/miss statistics
+- Extraction method (regex vs LLM)
+- Retry attempts and delays
+- Per-hunk timing and costs
+
+### Check Log Files
+
+```bash
+# View recent log files
+ls -lh .warden/logs/
+
+# Parse most recent log
+cat .warden/logs/*.jsonl | tail -1 | jq '.'
+
+# Extract all errors
+cat .warden/logs/*.jsonl | jq 'select(.failedHunks > 0)'
+```
+
+### Reproduce Locally
+
+```bash
+# Match PR environment
+warden scan --base=main
+
+# Use same model as CI
+warden scan --model=claude-sonnet-4-20250514
+
+# Enable all logging
+warden scan -vv 2>&1 | tee debug.log
+```
+
+### Report Issues
+
+When reporting issues, include:
+
+<Steps>
+  <Step title="Warden Version">
+    ```bash
+    warden --version
+    ```
+  </Step>
+  <Step title="Configuration">
+    ```bash
+    cat warden.toml
+    ```
+  </Step>
+  <Step title="Debug Logs">
+    ```bash
+    warden scan -vv 2>&1 | tee debug.log
+    ```
+  </Step>
+  <Step title="Sanitized JSONL Output">
+    ```bash
+    warden scan --output=report.jsonl
+    # Remove sensitive findings before sharing
+    ```
+  </Step>
+</Steps>
+
+## Common Error Reference
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Claude Code CLI not found` | Missing `claude` binary | Install CLI or use API key |
+| `Authentication failed: unauthorized` | Invalid credentials | Re-login or check API key |
+| `EPIPE` / `ECONNRESET` | IPC failure | Use API key authentication |
+| `No changes found` | No uncommitted changes | Check `git status` and base ref |
+| `Duplicate skill names` | Config validation error | Rename skills to unique names |
+| `paths is required for schedule` | Missing paths config | Add `paths` array to skill |
+| `Large prompt warning` | File chunk too large | Adjust coalescing or skip file |
+| `RateLimitError` | API rate limit | Increase retry delay, lower concurrency |
+| `Findings extraction failed` | JSON parse error | Check debug logs, verify model output |
+
+## Getting Help
+
+<Tip>
+For questions and support:
+- [GitHub Issues](https://github.com/getsentry/warden/issues)
+- [Documentation](https://warden.sentry.dev)
+- [Sentry Discord](https://discord.gg/sentry)
+</Tip>

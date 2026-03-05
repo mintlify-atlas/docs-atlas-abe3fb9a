@@ -1,0 +1,528 @@
+---
+title: Findings
+description: Understanding finding structure, severity levels, confidence levels, and filtering
+---
+
+## What are Findings?
+
+Findings are issues detected by skills during code analysis. Each finding represents a potential problem with:
+- **Location** - File path and line numbers
+- **Severity** - How critical the issue is (high, medium, low)
+- **Confidence** - How certain we are it's a real issue (high, medium, low)
+- **Description** - What's wrong and why it matters
+- **Suggested Fix** - Automated fix as a diff (optional)
+
+## Finding Structure
+
+From `src/types/index.ts:105-117`:
+
+```typescript
+export const FindingSchema = z.object({
+  id: z.string(),
+  severity: SeveritySchema,
+  confidence: ConfidenceSchema.optional(),
+  title: z.string(),
+  description: z.string(),
+  verification: z.string().optional(),
+  location: LocationSchema.optional(),
+  additionalLocations: z.array(LocationSchema).optional(),
+  suggestedFix: SuggestedFixSchema.optional(),
+  elapsedMs: z.number().nonnegative().optional(),
+});
+```
+
+### Location Schema
+
+From `src/types/index.ts:90-95`:
+
+```typescript
+export const LocationSchema = z.object({
+  path: z.string(),
+  startLine: z.number().int().positive(),
+  endLine: z.number().int().positive().optional(),
+});
+```
+
+**Location types:**
+- **Single line**: `{ path: "src/auth.ts", startLine: 42 }`
+- **Line range**: `{ path: "src/auth.ts", startLine: 42, endLine: 48 }`
+- **No location**: Entire file or conceptual issue
+
+**Additional locations** track related code:
+
+```json
+{
+  "location": { "path": "src/auth.ts", "startLine": 42 },
+  "additionalLocations": [
+    { "path": "src/config.ts", "startLine": 18 },
+    { "path": "src/server.ts", "startLine": 156 }
+  ]
+}
+```
+
+### Suggested Fix Schema
+
+From `src/types/index.ts:98-102`:
+
+```typescript
+export const SuggestedFixSchema = z.object({
+  description: z.string(),
+  diff: z.string(),
+});
+```
+
+**Example:**
+
+```json
+{
+  "suggestedFix": {
+    "description": "Add null check before accessing usage.input_tokens",
+    "diff": "--- a/src/sdk/usage.ts\n+++ b/src/sdk/usage.ts\n@@ -10,1 +10,1 @@\n-  const tokens = usage.input_tokens;\n+  const tokens = usage?.input_tokens ?? 0;\n"
+  }
+}
+```
+
+<Note>
+  Suggested fixes can be applied automatically with `npx warden --fix` (experimental).
+</Note>
+
+## Severity Levels
+
+Warden uses a 3-level severity scale:
+
+```typescript
+// From src/types/index.ts:15-16
+export const SeveritySchema = z.preprocess(
+  normalizeSeverity,
+  z.enum(['high', 'medium', 'low'])
+);
+```
+
+### Severity Definitions
+
+<Steps>
+  <Step title="high">
+    **Will cause incorrect behavior, data loss, or crash in normal usage**
+    
+    Examples:
+    - Null pointer dereferences
+    - SQL injection vulnerabilities
+    - Race conditions in concurrent code
+    - Memory leaks
+    - Authentication bypasses
+  </Step>
+  
+  <Step title="medium">
+    **Incorrect behavior requiring specific conditions to trigger**
+    
+    Examples:
+    - Missing error handling for edge cases
+    - Performance issues under load
+    - Inconsistent error messages
+    - Missing input validation
+    - Code duplication
+  </Step>
+  
+  <Step title="low">
+    **Code quality issues that don't affect correctness**
+    
+    Examples:
+    - Style inconsistencies
+    - Missing comments
+    - Non-critical TODOs
+    - Verbose code
+    - Minor inefficiencies
+    
+    <Warning>
+      Many skills deliberately avoid low severity. If you're not sure it's a problem, don't report it.
+    </Warning>
+  </Step>
+</Steps>
+
+### Severity Ordering
+
+From `src/types/index.ts:44-48`:
+
+```typescript
+export const SEVERITY_ORDER: Record<Severity, number> = {
+  high: 0,    // Most severe
+  medium: 1,
+  low: 2,     // Least severe
+};
+```
+
+### Legacy Severity Values
+
+Warden normalizes legacy severity values for backwards compatibility:
+
+```typescript
+// From src/types/index.ts:8-12
+function normalizeSeverity(val: unknown): unknown {
+  if (val === 'critical') return 'high';
+  if (val === 'info') return 'low';
+  return val;
+}
+```
+
+## Confidence Levels
+
+Confidence indicates how certain the skill is that a finding is a real issue:
+
+```typescript
+// From src/types/index.ts:19-20
+export const ConfidenceSchema = z.enum(['high', 'medium', 'low']);
+```
+
+### Confidence Definitions
+
+<Accordion title="high confidence">
+  **Pattern traced to specific code, confirmed triggerable**
+  
+  - Direct code inspection proves the issue exists
+  - Issue matches a known bug pattern
+  - Triggering condition is clearly present
+  - Fix is straightforward
+  
+  **Example**: Accessing `response.content[0]` without checking array length
+</Accordion>
+
+<Accordion title="medium confidence">
+  **Pattern present, but surrounding context may mitigate**
+  
+  - Issue pattern exists but may be intentional
+  - Surrounding code might handle the edge case
+  - Requires more context to confirm
+  - Multiple valid interpretations
+  
+  **Example**: Missing null check, but upstream validation might exist
+</Accordion>
+
+<Accordion title="low confidence">
+  **Vague resemblance to a historical pattern**
+  
+  - Speculative or theoretical issue
+  - Insufficient context to confirm
+  - Pattern is weak or ambiguous
+  
+  <Warning>
+    Most skills filter out low confidence findings. When in doubt, investigate more before reporting.
+  </Warning>
+</Accordion>
+
+### Confidence Ordering
+
+From `src/types/index.ts:26-30`:
+
+```typescript
+export const CONFIDENCE_ORDER: Record<Confidence, number> = {
+  high: 0,    // Most confident
+  medium: 1,
+  low: 2,     // Least confident
+};
+```
+
+## Filtering Findings
+
+Warden provides multiple filtering mechanisms:
+
+### Severity Filtering
+
+From `src/types/index.ts:55-60`:
+
+```typescript
+export function filterFindingsBySeverity(
+  findings: Finding[],
+  threshold?: SeverityThreshold
+): Finding[] {
+  if (!threshold) return findings;
+  if (threshold === 'off') return [];
+  const thresholdOrder = SEVERITY_ORDER[threshold];
+  return findings.filter((f) => 
+    SEVERITY_ORDER[f.severity] <= thresholdOrder
+  );
+}
+```
+
+**Threshold values:**
+- `"high"` - Only high severity
+- `"medium"` - Medium and high
+- `"low"` - All severities
+- `"off"` - Disable (returns empty array)
+
+### Confidence Filtering
+
+From `src/types/index.ts:67-74`:
+
+```typescript
+export function filterFindingsByConfidence(
+  findings: Finding[],
+  threshold?: ConfidenceThreshold
+): Finding[] {
+  if (!threshold || threshold === 'off') return findings;
+  const thresholdOrder = CONFIDENCE_ORDER[threshold];
+  return findings.filter((f) => {
+    if (!f.confidence) return true; // Backwards compat
+    return CONFIDENCE_ORDER[f.confidence] <= thresholdOrder;
+  });
+}
+```
+
+<Note>
+  Findings without a confidence field are always included for backwards compatibility.
+</Note>
+
+### Combined Filtering
+
+From `src/types/index.ts:81-87`:
+
+```typescript
+export function filterFindings(
+  findings: Finding[],
+  reportOn?: SeverityThreshold,
+  minConfidence?: ConfidenceThreshold
+): Finding[] {
+  return filterFindingsByConfidence(
+    filterFindingsBySeverity(findings, reportOn),
+    minConfidence
+  );
+}
+```
+
+**Filter order:**
+1. Severity filtering (reportOn)
+2. Confidence filtering (minConfidence)
+
+## Configuration
+
+### Global Defaults
+
+```toml
+[defaults]
+reportOn = "medium"        # Show medium+ severity
+minConfidence = "medium"   # Show medium+ confidence
+maxFindings = 100          # Limit output
+failOn = "high"            # Fail on high severity
+```
+
+### Skill-Level Overrides
+
+```toml
+[[skills]]
+name = "security-audit"
+reportOn = "low"           # Show all severities
+minConfidence = "high"     # Only high confidence
+maxFindings = 50           # Limit to 50
+failOn = "medium"          # Fail on medium+
+```
+
+### Trigger-Level Overrides
+
+```toml
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened"]
+reportOn = "high"          # Override: only show high
+maxFindings = 10           # Override: limit to 10
+```
+
+**Precedence:** Trigger > Skill > Defaults
+
+## Deduplication
+
+Warden deduplicates findings to avoid reporting the same issue multiple times:
+
+### By ID
+
+Findings with identical IDs are considered duplicates:
+
+```typescript
+// From src/sdk/extract.ts
+export function deduplicateFindings(findings: Finding[]): Finding[] {
+  const seen = new Set<string>();
+  return findings.filter(f => {
+    if (seen.has(f.id)) return false;
+    seen.add(f.id);
+    return true;
+  });
+}
+```
+
+### Cross-Location Merging
+
+Findings at different locations with similar content are merged:
+
+```typescript
+// From src/sdk/extract.ts
+export function mergeCrossLocationFindings(
+  findings: Finding[]
+): { findings: Finding[], mergeResult: MergeResult }
+```
+
+**Merge strategy:**
+1. Group findings by similarity (title, description, severity)
+2. Select highest priority finding as primary
+3. Add other locations to `additionalLocations`
+4. Track merge groups for reporting
+
+## Priority Sorting
+
+Findings are sorted by priority for display:
+
+```typescript
+// From src/types/index.ts:130-143
+export function compareFindingPriority(a: Finding, b: Finding): number {
+  // 1. Severity (higher = more important)
+  const sevDiff = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
+  if (sevDiff !== 0) return sevDiff;
+
+  // 2. Confidence (higher = more important)
+  const confA = CONFIDENCE_ORDER[a.confidence ?? 'low'];
+  const confB = CONFIDENCE_ORDER[b.confidence ?? 'low'];
+  const confDiff = confA - confB;
+  if (confDiff !== 0) return confDiff;
+
+  // 3. File path (alphabetical)
+  const pathCmp = (a.location?.path ?? '').localeCompare(b.location?.path ?? '');
+  if (pathCmp !== 0) return pathCmp;
+
+  // 4. Line number (earlier = more important)
+  return findingLine(a) - findingLine(b);
+}
+```
+
+## Validation
+
+Findings are validated to ensure they fall within analyzed code:
+
+```typescript
+// From src/sdk/extract.ts
+export function validateFindings(
+  findings: Finding[],
+  hunkStartLine: number,
+  hunkEndLine: number
+): Finding[]
+```
+
+**Validation rules:**
+- `location.startLine` must fall within `[hunkStartLine, hunkEndLine]`
+- Findings without locations are always valid
+- Findings spanning beyond the hunk are allowed if they start within it
+
+<Warning>
+  Findings that reference lines outside the analyzed hunk are discarded. This prevents LLM hallucinations about code it never saw.
+</Warning>
+
+## Skill Report
+
+Findings are bundled into a skill report:
+
+```typescript
+// From src/types/index.ts:177-197
+export const SkillReportSchema = z.object({
+  skill: z.string(),
+  summary: z.string(),
+  findings: z.array(FindingSchema),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  durationMs: z.number().nonnegative().optional(),
+  usage: UsageStatsSchema.optional(),
+  skippedFiles: z.array(SkippedFileSchema).optional(),
+  failedHunks: z.number().int().nonnegative().optional(),
+  failedExtractions: z.number().int().nonnegative().optional(),
+  auxiliaryUsage: AuxiliaryUsageMapSchema.optional(),
+  files: z.array(FileReportSchema).optional(),
+  model: z.string().optional(),
+});
+```
+
+## Output Formats
+
+### CLI Terminal
+
+```
+✗ 3 issues found in src/auth.ts
+
+  high    Missing null check on usage field
+  src/auth.ts:42
+  
+  The code accesses usage.input_tokens without checking
+  if usage is null. The SDK can return null for usage
+  in error responses.
+  
+  Suggested fix:
+  + const tokens = usage?.input_tokens ?? 0;
+```
+
+### JSON
+
+```json
+{
+  "skill": "find-warden-bugs",
+  "summary": "Found 3 issues across 2 files",
+  "findings": [
+    {
+      "id": "auth-null-check-42",
+      "severity": "high",
+      "confidence": "high",
+      "title": "Missing null check on usage field",
+      "description": "The code accesses usage.input_tokens...",
+      "location": { "path": "src/auth.ts", "startLine": 42 },
+      "suggestedFix": {
+        "description": "Add null check",
+        "diff": "..."
+      }
+    }
+  ]
+}
+```
+
+### GitHub PR Comment
+
+```markdown
+**⚠️ high:** Missing null check on usage field
+
+The code accesses `usage.input_tokens` without checking if `usage` is null.
+The SDK can return null for usage in error responses.
+
+**Suggested fix:**
+```typescript
+const tokens = usage?.input_tokens ?? 0;
+```
+```
+
+## Best Practices
+
+<Card title="Be Specific" icon="crosshairs">
+  Good: "Missing null check on usage.input_tokens at line 42"
+  
+  Bad: "Code might crash"
+</Card>
+
+<Card title="Explain Impact" icon="circle-exclamation">
+  Describe what happens when the issue triggers. "Will throw TypeError when API returns error response."
+</Card>
+
+<Card title="Calibrate Confidence" icon="gauge-high">
+  High confidence requires proof. If you need more context, read more files before reporting.
+</Card>
+
+<Card title="Provide Fixes" icon="wrench">
+  Include `suggestedFix` when the fix is clear and mechanical. Use unified diff format.
+</Card>
+
+<Card title="Use Verification" icon="clipboard-check">
+  The `verification` field explains how to test/verify the issue. "Run test suite after applying fix."
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skills" icon="wand-magic-sparkles" href="/concepts/skills">
+    Learn how skills generate findings
+  </Card>
+  <Card title="Triggers" icon="bolt" href="/concepts/triggers">
+    Control when findings are reported
+  </Card>
+  <Card title="Configuration" icon="gear" href="/concepts/configuration">
+    Configure filtering and output
+  </Card>
+</CardGroup>

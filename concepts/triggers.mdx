@@ -1,0 +1,417 @@
+---
+title: Triggers
+description: Event-driven execution with pull_request, local, and schedule triggers
+---
+
+## What are Triggers?
+
+Triggers control **when and where** skills run. Without triggers, a skill runs everywhere (wildcard behavior). With triggers, you can target specific events, actions, and files.
+
+Warden supports three trigger types:
+- **`pull_request`** - GitHub PR events (opened, synchronize, reopened, closed)
+- **`local`** - CLI-only execution
+- **`schedule`** - Scheduled cron jobs (GitHub Actions)
+
+## Trigger Configuration
+
+Triggers are defined under `[[skills.triggers]]` in your `warden.toml`:
+
+```toml
+[[skills]]
+name = "security-audit"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+failOn = "high"
+```
+
+<Note>
+  Skills without triggers run in **all environments** (pull requests, local CLI, schedule).
+</Note>
+
+## Trigger Types
+
+### `pull_request` Triggers
+
+Run on GitHub pull request events:
+
+```toml
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+paths = ["src/**/*.ts"]
+ignorePaths = ["src/**/*.test.ts"]
+```
+
+**Required fields:**
+- `type: "pull_request"`
+- `actions: string[]` - PR actions to trigger on
+
+**Available actions:**
+- `opened` - PR created
+- `synchronize` - New commits pushed
+- `reopened` - PR reopened after being closed
+- `closed` - PR closed/merged
+
+**When it runs:**
+- **GitHub Action**: Matches event type and action
+- **Local CLI**: Always runs (ignores action filter)
+
+<Accordion title="Why does local CLI ignore actions?">
+  In local development, there's no PR event context. The CLI runs skills on uncommitted changes or diff ranges, so action filters don't apply. Path filters still work.
+</Accordion>
+
+### `local` Triggers
+
+Run only via CLI (`npx warden`):
+
+```toml
+[[skills.triggers]]
+type = "local"
+paths = ["experiments/**"]
+```
+
+**Required fields:**
+- `type: "local"`
+
+**When it runs:**
+- **CLI**: Always runs
+- **GitHub Action**: Never runs
+
+**Use cases:**
+- Development-only checks (performance profiling, debug logging)
+- Expensive analysis not suitable for CI
+- Local-only tools (file watchers, IDE integration)
+
+### `schedule` Triggers
+
+Run on a schedule (cron syntax):
+
+```toml
+[[skills]]
+name = "full-repo-audit"
+paths = ["src/**/*.ts"]  # Required for schedule triggers
+
+[[skills.triggers]]
+type = "schedule"
+schedule.issueTitle = "Weekly Security Audit"
+schedule.createFixPR = true
+schedule.fixBranchPrefix = "warden-weekly"
+```
+
+**Required fields:**
+- `type: "schedule"`
+- `paths` at skill level (schedule triggers can't analyze all files)
+
+**Schedule configuration:**
+
+```typescript
+// From src/config/schema.ts:36-44
+export const ScheduleConfigSchema = z.object({
+  /** Title for the tracking issue (default: "Warden: {skillName}") */
+  issueTitle: z.string().optional(),
+  /** Create PR with fixes when suggestedFix is available */
+  createFixPR: z.boolean().default(false),
+  /** Branch prefix for fix PRs (default: "warden-fix") */
+  fixBranchPrefix: z.string().default('warden-fix'),
+});
+```
+
+**How it works:**
+1. GitHub Actions triggers on schedule event
+2. Warden loads files matching skill `paths`
+3. Skills analyze files and generate findings
+4. Findings are posted to a tracking GitHub issue
+5. If `createFixPR: true`, generates fix PRs from suggested fixes
+
+<Warning>
+  Schedule triggers **require** `paths` configuration. Without it, Warden would analyze the entire repository on every run.
+</Warning>
+
+## Path Filters
+
+All trigger types support path filters:
+
+```toml
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened"]
+paths = ["src/**/*.ts", "lib/**/*.ts"]     # Include
+ignorePaths = ["**/*.test.ts", "**/*.d.ts"] # Exclude
+```
+
+### Glob Patterns
+
+Warden uses standard glob syntax:
+
+| Pattern | Matches | Example |
+|---------|---------|-------|
+| `*` | Any string (no `/`) | `*.ts` → `file.ts` |
+| `**` | Any string (with `/`) | `src/**` → `src/a/b.ts` |
+| `?` | Single character | `test?.ts` → `test1.ts` |
+| `[abc]` | Character class | `[a-z].ts` → `a.ts` |
+
+**Pattern matching logic:**
+
+```typescript
+// From src/triggers/matcher.ts:70-72
+export function matchGlob(pattern: string, path: string): boolean {
+  return globToRegex(pattern).test(path);
+}
+```
+
+### Filter Precedence
+
+1. **Skill-level `paths`**: File must match at least one pattern
+2. **Skill-level `ignorePaths`**: File must not match any pattern
+3. **Trigger-level `paths`**: Overrides skill-level
+4. **Trigger-level `ignorePaths`**: Overrides skill-level
+5. **Global `defaults.ignorePaths`**: Applied to all skills
+
+<Accordion title="Filter resolution example">
+  ```toml
+  [defaults]
+  ignorePaths = ["dist/**", "node_modules/**"]
+  
+  [[skills]]
+  name = "security"
+  paths = ["src/**/*.ts"]
+  ignorePaths = ["src/generated/**"]
+  
+  [[skills.triggers]]
+  type = "pull_request"
+  actions = ["opened"]
+  paths = ["src/auth/**"]  # Narrows skill paths
+  ```
+  
+  **Result**: Only analyzes `src/auth/**/*.ts`, excluding:
+  - `src/generated/**` (skill ignore)
+  - `dist/**` and `node_modules/**` (global ignore)
+</Accordion>
+
+## Per-Trigger Overrides
+
+Triggers can override skill-level configuration:
+
+```toml
+[[skills]]
+name = "performance-check"
+failOn = "medium"       # Skill default
+reportOn = "low"        # Skill default
+maxFindings = 100       # Skill default
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened"]
+failOn = "high"         # Override: only fail on high severity
+maxFindings = 10        # Override: limit to 10 findings
+
+[[skills.triggers]]
+type = "local"
+reportOn = "medium"     # Override: hide low severity locally
+```
+
+**Overridable fields:**
+- `failOn` - Severity threshold for failures
+- `reportOn` - Minimum severity to report
+- `maxFindings` - Maximum findings to show
+- `reportOnSuccess` - Report even with zero findings
+- `requestChanges` - Use GitHub REQUEST_CHANGES review
+- `failCheck` - Fail the GitHub check run
+- `model` - Claude model to use
+- `maxTurns` - Maximum agentic turns per hunk
+- `minConfidence` - Minimum confidence level
+
+See [Configuration](/concepts/configuration) for field descriptions.
+
+## Trigger Matching Logic
+
+From `src/triggers/matcher.ts:162-203`:
+
+```typescript
+export function matchTrigger(
+  trigger: ResolvedTrigger,
+  context: EventContext,
+  environment?: TriggerType | 'github'
+): boolean {
+  // Wildcard triggers match everywhere
+  if (trigger.type === '*') {
+    const filenames = context.pullRequest?.files.map((f) => f.filename);
+    return matchPathFilters(trigger.filters, filenames);
+  }
+
+  // Type-based matching
+  if (trigger.type === 'local') {
+    if (environment !== 'local') return false;
+  }
+
+  if (trigger.type === 'pull_request') {
+    if (environment === 'local') {
+      // Local mode: skip event/action checks, apply path filters
+    } else {
+      if (context.eventType !== 'pull_request') return false;
+      if (!trigger.actions?.includes(context.action)) return false;
+    }
+  }
+
+  if (trigger.type === 'schedule') {
+    if (context.eventType !== 'schedule') return false;
+    return (context.pullRequest?.files.length ?? 0) > 0;
+  }
+
+  // Apply path filters
+  const filenames = context.pullRequest?.files.map((f) => f.filename);
+  return matchPathFilters(trigger.filters, filenames);
+}
+```
+
+## Wildcard Triggers
+
+Skills without explicit triggers use wildcard matching:
+
+```toml
+[[skills]]
+name = "universal-linter"
+paths = ["**/*.js"]
+# No triggers = runs everywhere
+```
+
+**Behavior:**
+- Runs on all PR events
+- Runs in local CLI
+- Runs on schedule (if paths are set)
+- Only filtered by `paths` and `ignorePaths`
+
+## Multiple Triggers
+
+Skills can have multiple triggers with different configurations:
+
+```toml
+[[skills]]
+name = "comprehensive-check"
+
+# Strict on PRs
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+failOn = "high"
+maxFindings = 50
+
+# Lenient locally
+[[skills.triggers]]
+type = "local"
+failOn = "off"
+reportOn = "medium"
+
+# Weekly deep scan
+[[skills.triggers]]
+type = "schedule"
+maxFindings = 200
+schedule.createFixPR = true
+```
+
+<Note>
+  If any trigger matches, the skill runs with that trigger's configuration.
+</Note>
+
+## Event Context
+
+Trigger matching uses event context parsed from GitHub or CLI:
+
+```typescript
+// From src/types/index.ts:264-271
+export const EventContextSchema = z.object({
+  eventType: GitHubEventTypeSchema,
+  action: z.string(),
+  repository: RepositoryContextSchema,
+  pullRequest: PullRequestContextSchema.optional(),
+  repoPath: z.string(),
+});
+```
+
+**GitHub event types** (from `src/types/index.ts:200-207`):
+
+```typescript
+export const GitHubEventTypeSchema = z.enum([
+  'pull_request',
+  'issues',
+  'issue_comment',
+  'pull_request_review',
+  'pull_request_review_comment',
+  'schedule',
+]);
+```
+
+## Type Definitions
+
+From `src/config/schema.ts:47-84`:
+
+```typescript
+export const TriggerTypeSchema = z.enum([
+  'pull_request',
+  'local',
+  'schedule'
+]);
+
+export const SkillTriggerSchema = z.object({
+  type: TriggerTypeSchema,
+  actions: z.array(z.string()).min(1).optional(),
+  // Per-trigger overrides
+  failOn: SeverityThresholdSchema.optional(),
+  reportOn: SeverityThresholdSchema.optional(),
+  maxFindings: z.number().int().positive().optional(),
+  reportOnSuccess: z.boolean().optional(),
+  requestChanges: z.boolean().optional(),
+  failCheck: z.boolean().optional(),
+  model: z.string().optional(),
+  maxTurns: z.number().int().positive().optional(),
+  minConfidence: ConfidenceThresholdSchema.optional(),
+  schedule: ScheduleConfigSchema.optional(),
+}).refine(
+  (data) => {
+    // actions is required for pull_request type
+    if (data.type === 'pull_request') {
+      return data.actions !== undefined && data.actions.length > 0;
+    }
+    return true;
+  },
+  { message: "actions is required for pull_request triggers" }
+);
+```
+
+## Best Practices
+
+<Card title="Start with pull_request" icon="code-pull-request">
+  Most skills should run on `opened` and `synchronize` to catch issues early.
+</Card>
+
+<Card title="Use local for experiments" icon="terminal">
+  Mark experimental or expensive skills as `local` until they're proven.
+</Card>
+
+<Card title="Narrow with paths" icon="filter">
+  Use path filters to target relevant files. Analyzing everything is wasteful.
+</Card>
+
+<Card title="Override per-environment" icon="sliders">
+  Be strict on PRs (`failOn: high`), lenient locally (`failOn: off`).
+</Card>
+
+<Card title="Schedule for deep scans" icon="clock">
+  Use schedule triggers for whole-repo audits that would be too slow for PRs.
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skills" icon="wand-magic-sparkles" href="/concepts/skills">
+    Learn about skill structure and execution
+  </Card>
+  <Card title="Findings" icon="magnifying-glass" href="/concepts/findings">
+    Understand finding structure and severity levels
+  </Card>
+  <Card title="Configuration" icon="gear" href="/concepts/configuration">
+    Explore the complete configuration schema
+  </Card>
+</CardGroup>

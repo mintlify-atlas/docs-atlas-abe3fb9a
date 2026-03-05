@@ -1,0 +1,421 @@
+---
+title: warden.toml Reference
+description: Complete reference for Warden's configuration file
+---
+
+The `warden.toml` file controls all aspects of Warden's behavior. Place it at the root of your repository.
+
+## File Structure
+
+```toml
+version = 1
+
+[defaults]
+# Global defaults inherited by all skills
+
+[[skills]]
+# Individual skill configuration
+
+[[skills.triggers]]
+# When and where the skill runs
+
+[runner]
+# Runtime behavior
+
+[logs]
+# Log management
+```
+
+## Version
+
+<ParamField path="version" type="number" required>
+  Configuration schema version. Must be `1`.
+</ParamField>
+
+```toml
+version = 1
+```
+
+## Defaults Section
+
+Settings applied to all skills unless overridden at the skill or trigger level.
+
+### Output Control
+
+<ParamField path="defaults.failOn" type="enum">
+  Exit with code 1 when findings meet this severity threshold.
+  
+  **Values:** `"off"`, `"high"`, `"medium"`, `"low"`  
+  **Default:** Not set (never fails)
+  
+  ```toml
+  [defaults]
+  failOn = "high"  # Fail on high severity findings
+  ```
+</ParamField>
+
+<ParamField path="defaults.reportOn" type="enum">
+  Only show findings at or above this severity level.
+  
+  **Values:** `"off"`, `"high"`, `"medium"`, `"low"`  
+  **Default:** Shows all findings
+  
+  ```toml
+  [defaults]
+  reportOn = "medium"  # Hide low severity findings
+  ```
+</ParamField>
+
+<ParamField path="defaults.maxFindings" type="number">
+  Maximum number of findings to report per skill run.
+  
+  **Default:** Unlimited  
+  **Minimum:** 1
+  
+  ```toml
+  [defaults]
+  maxFindings = 50
+  ```
+</ParamField>
+
+<ParamField path="defaults.reportOnSuccess" type="boolean">
+  Post a report even when no findings are detected.
+  
+  **Default:** `false`
+  
+  ```toml
+  [defaults]
+  reportOnSuccess = true
+  ```
+</ParamField>
+
+<ParamField path="defaults.minConfidence" type="enum">
+  Filter out findings below this confidence level.
+  
+  **Values:** `"off"`, `"high"`, `"medium"`, `"low"`  
+  **Default:** `"medium"`
+  
+  ```toml
+  [defaults]
+  minConfidence = "high"  # Only show high confidence findings
+  ```
+</ParamField>
+
+### GitHub Integration
+
+<ParamField path="defaults.requestChanges" type="boolean">
+  Use `REQUEST_CHANGES` review event when findings exceed `failOn` threshold.
+  
+  **Default:** `false`
+  
+  ```toml
+  [defaults]
+  requestChanges = true
+  ```
+</ParamField>
+
+<ParamField path="defaults.failCheck" type="boolean">
+  Fail the GitHub Actions check run when findings exceed `failOn` threshold.
+  
+  **Default:** `false`
+  
+  ```toml
+  [defaults]
+  failCheck = true
+  ```
+</ParamField>
+
+### Model Configuration
+
+<ParamField path="defaults.model" type="string">
+  Default Claude model for all skills.
+  
+  **Example values:** `"claude-sonnet-4-20250514"`, `"claude-opus-4-20250514"`  
+  **Default:** SDK default model
+  
+  ```toml
+  [defaults]
+  model = "claude-sonnet-4-20250514"
+  ```
+</ParamField>
+
+<ParamField path="defaults.maxTurns" type="number">
+  Maximum agentic turns (API round-trips) per hunk analysis.
+  
+  **Default:** 50  
+  **Minimum:** 1
+  
+  ```toml
+  [defaults]
+  maxTurns = 100  # Allow deeper analysis
+  ```
+</ParamField>
+
+### Repository Settings
+
+<ParamField path="defaults.defaultBranch" type="string">
+  Base branch for comparisons (e.g., `main`, `master`, `develop`).
+  
+  **Default:** Auto-detected from repository
+  
+  ```toml
+  [defaults]
+  defaultBranch = "main"
+  ```
+</ParamField>
+
+<ParamField path="defaults.ignorePaths" type="array">
+  Path patterns to exclude from all skill analyses. Uses glob syntax.
+  
+  ```toml
+  [defaults]
+  ignorePaths = ["dist/**", "**/*.test.ts", "evals/**"]
+  ```
+</ParamField>
+
+### Performance Tuning
+
+<ParamField path="defaults.batchDelayMs" type="number">
+  Delay in milliseconds between batch starts when processing files in parallel.
+  
+  **Default:** 0 (no delay)  
+  **Minimum:** 0
+  
+  ```toml
+  [defaults]
+  batchDelayMs = 1000  # 1 second delay between batches
+  ```
+</ParamField>
+
+<ParamField path="defaults.auxiliaryMaxRetries" type="number">
+  Max retries for auxiliary Haiku calls (extraction repair, merging, deduplication, fix evaluation).
+  
+  **Default:** 5  
+  **Minimum:** 1
+  
+  ```toml
+  [defaults]
+  auxiliaryMaxRetries = 3
+  ```
+</ParamField>
+
+### Chunking Configuration
+
+See [Path Filtering](/configuration/path-filtering) for detailed chunking options.
+
+```toml
+[defaults.chunking]
+maxContextFiles = 50
+
+[defaults.chunking.coalesce]
+enabled = true
+maxGapLines = 30
+maxChunkSize = 8000
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/*.config.*"
+mode = "whole-file"
+```
+
+## Runner Section
+
+Controls Warden's runtime behavior.
+
+<ParamField path="runner.concurrency" type="number">
+  Maximum concurrent file analyses across all skills.
+  
+  **Default:** 4  
+  **Minimum:** 1
+  
+  ```toml
+  [runner]
+  concurrency = 8  # Analyze 8 files simultaneously
+  ```
+</ParamField>
+
+## Logs Section
+
+Manages log file retention and cleanup.
+
+<ParamField path="logs.cleanup" type="enum">
+  How to handle expired log files.
+  
+  **Values:**
+  - `"ask"` - Prompt in TTY before deletion (default)
+  - `"auto"` - Silently delete expired logs
+  - `"never"` - Keep all logs indefinitely
+  
+  ```toml
+  [logs]
+  cleanup = "auto"
+  ```
+</ParamField>
+
+<ParamField path="logs.retentionDays" type="number">
+  Number of days to retain log files before considering them expired.
+  
+  **Default:** 30  
+  **Minimum:** 1
+  
+  ```toml
+  [logs]
+  retentionDays = 7
+  ```
+</ParamField>
+
+## Complete Example
+
+```toml
+version = 1
+
+[defaults]
+# Output control
+failOn = "high"
+reportOn = "medium"
+maxFindings = 50
+minConfidence = "medium"
+
+# Model settings
+model = "claude-sonnet-4-20250514"
+maxTurns = 50
+
+# Repository
+defaultBranch = "main"
+ignorePaths = ["dist/**", "**/*.test.ts"]
+
+# GitHub integration
+requestChanges = false
+failCheck = false
+
+[defaults.chunking]
+maxContextFiles = 50
+
+[defaults.chunking.coalesce]
+enabled = true
+maxGapLines = 30
+maxChunkSize = 8000
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/pnpm-lock.yaml"
+mode = "skip"
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/*.config.*"
+mode = "whole-file"
+
+[runner]
+concurrency = 4
+
+[logs]
+cleanup = "ask"
+retentionDays = 30
+
+[[skills]]
+name = "security-review"
+paths = ["src/**/*.ts"]
+ignorePaths = ["**/*.test.ts"]
+failOn = "high"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+
+[[skills]]
+name = "code-quality"
+remote = "getsentry/sentry-skills"
+
+[[skills.triggers]]
+type = "local"
+```
+
+## Environment Variables
+
+These environment variables affect Warden's behavior:
+
+| Variable | Purpose | Required |
+|----------|---------|----------|
+| `WARDEN_ANTHROPIC_API_KEY` | Claude API key | Yes (unless using Claude Code subscription) |
+| `WARDEN_MODEL` | Default model (lowest priority in precedence chain) | No |
+| `WARDEN_STATE_DIR` | Override cache location | No |
+| `WARDEN_SKILL_CACHE_TTL` | Cache TTL in seconds for unpinned remote skills | No |
+
+```bash
+export WARDEN_ANTHROPIC_API_KEY="sk-ant-..."
+export WARDEN_MODEL="claude-sonnet-4-20250514"
+export WARDEN_STATE_DIR="~/.cache/warden"
+export WARDEN_SKILL_CACHE_TTL="3600"  # 1 hour
+```
+
+<Note>
+  Environment variables have lower precedence than configuration file settings. See [Model Precedence](/configuration/skill-config#model-precedence) for the complete hierarchy.
+</Note>
+
+## Validation
+
+Warden validates your configuration on startup using Zod schemas. Common validation errors:
+
+<Warning>
+  **Duplicate skill names:** Each skill must have a unique name.
+  
+  ```toml
+  # ❌ Invalid - duplicate names
+  [[skills]]
+  name = "my-skill"
+  
+  [[skills]]
+  name = "my-skill"  # Error!
+  ```
+</Warning>
+
+<Warning>
+  **Schedule triggers require paths:** Skills with schedule triggers must specify which files to analyze.
+  
+  ```toml
+  # ❌ Invalid - schedule without paths
+  [[skills]]
+  name = "nightly-scan"
+  
+  [[skills.triggers]]
+  type = "schedule"  # Error: paths required!
+  
+  # ✅ Valid
+  [[skills]]
+  name = "nightly-scan"
+  paths = ["src/**/*.ts"]
+  
+  [[skills.triggers]]
+  type = "schedule"
+  ```
+</Warning>
+
+<Warning>
+  **Pull request triggers require actions:** Specify which PR events should trigger the skill.
+  
+  ```toml
+  # ❌ Invalid - missing actions
+  [[skills.triggers]]
+  type = "pull_request"  # Error: actions required!
+  
+  # ✅ Valid
+  [[skills.triggers]]
+  type = "pull_request"
+  actions = ["opened", "synchronize"]
+  ```
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skill Configuration" icon="puzzle-piece" href="/configuration/skill-config">
+    Learn about individual skill settings
+  </Card>
+  <Card title="Triggers" icon="bolt" href="/configuration/triggers">
+    Configure when and where skills run
+  </Card>
+  <Card title="Path Filtering" icon="filter" href="/configuration/path-filtering">
+    Control which files are analyzed
+  </Card>
+  <Card title="Severity Thresholds" icon="gauge" href="/configuration/severity-thresholds">
+    Fine-tune finding severity and confidence levels
+  </Card>
+</CardGroup>

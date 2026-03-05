@@ -1,0 +1,391 @@
+---
+title: "warden (Main Command)"
+description: "Analyze code for issues using Claude-powered skills"
+---
+
+## Overview
+
+The main `warden` command analyzes your code for issues using skills defined in `warden.toml`.
+
+## Usage
+
+```bash
+warden [targets...] [options]
+```
+
+## Targets
+
+Specify what code to analyze. Defaults to uncommitted changes if no targets provided.
+
+### Uncommitted changes (default)
+
+```bash
+warden
+```
+
+Analyzes:
+- Unstaged changes (modified files)
+- Staged changes (files added to git)
+
+### Specific files
+
+```bash
+warden src/api/users.ts
+warden src/api/users.ts src/utils/auth.ts
+```
+
+### Directories
+
+```bash
+warden src/api/
+warden src/ test/
+```
+
+### Git diffs
+
+```bash
+# Compare with branch
+warden main..HEAD
+warden origin/main..feature-branch
+
+# Compare commits
+warden abc1234..def5678
+```
+
+### Glob patterns
+
+```bash
+warden 'src/**/*.ts'
+warden '*.{ts,tsx}'
+```
+
+<Note>
+Quote glob patterns to prevent shell expansion.
+</Note>
+
+## Options
+
+### Analysis Control
+
+#### --config, -c
+
+Use a custom configuration file:
+
+```bash
+warden --config ./configs/strict.toml
+```
+
+Default: `warden.toml` in repo root.
+
+#### --skills
+
+Run specific skills only:
+
+```bash
+warden --skills find-bugs,security-audit
+```
+
+Comma-separated skill names.
+
+#### --fail-on
+
+Minimum severity to exit with failure code:
+
+```bash
+warden --fail-on high
+warden --fail-on medium
+warden --fail-on off  # Never fail
+```
+
+Values: `off`, `high`, `medium`, `low`
+
+#### --report-on
+
+Minimum severity to show in output:
+
+```bash
+warden --report-on medium
+warden --report-on low
+```
+
+Values: `off`, `high`, `medium`, `low`
+
+#### --max-findings
+
+Limit number of findings reported:
+
+```bash
+warden --max-findings 10
+```
+
+### Output Control
+
+#### --quiet, -q
+
+Minimal output - only errors:
+
+```bash
+warden --quiet
+```
+
+#### --verbose
+
+Show detailed progress:
+
+```bash
+warden --verbose
+```
+
+#### --debug
+
+Show debug information:
+
+```bash
+warden --debug
+```
+
+#### --json
+
+Output findings as JSON:
+
+```bash
+warden --json > findings.json
+```
+
+#### --output, -o
+
+Write findings to JSONL file:
+
+```bash
+warden --output findings.jsonl
+```
+
+#### --no-color
+
+Disable colored output:
+
+```bash
+warden --no-color
+```
+
+### Performance
+
+#### --parallel, -p
+
+Number of concurrent skill executions:
+
+```bash
+warden --parallel 3
+```
+
+Default: 5
+
+### Other
+
+#### --help, -h
+
+Show help:
+
+```bash
+warden --help
+```
+
+#### --version, -v
+
+Show version:
+
+```bash
+warden --version
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|----------|
+| `0` | Success - no failures above threshold |
+| `1` | Failure - findings exceed `failOn` threshold |
+| `130` | User aborted (Ctrl+C) |
+
+## Examples
+
+### Analyze uncommitted changes
+
+```bash
+npx warden
+```
+
+Output:
+
+```
+⚡ Warden v0.18.0
+
+🔍 Running 2 skills on 5 files...
+
+✓ code-quality: 3 findings
+  src/api/users.ts:45 - Missing error handling [medium]
+  src/api/auth.ts:12 - Hardcoded secret [high]
+  src/utils/jwt.ts:89 - Weak signature algorithm [high]
+
+✓ security-audit: 1 finding
+  src/api/auth.ts:12 - Credentials in code [high]
+
+💰 Cost: $0.05 (18.2K tokens)
+
+❌ Failed: 3 high severity findings (threshold: high)
+```
+
+### Analyze specific directory
+
+```bash
+npx warden src/api/
+```
+
+### Compare with main branch
+
+```bash
+npx warden main..HEAD
+```
+
+### Quiet mode for CI
+
+```bash
+if npx warden --quiet; then
+  echo "✓ Passed"
+else
+  echo "✗ Failed"
+  exit 1
+fi
+```
+
+### JSON output
+
+```bash
+npx warden --json > findings.json
+cat findings.json | jq '.findings[] | select(.severity == "high")'
+```
+
+### Verbose output
+
+```bash
+npx warden --verbose
+```
+
+Output:
+
+```
+⚡ Warden v0.18.0
+
+📁 Discovered 2 skills
+  • code-quality (local)
+  • security-audit (remote: getsentry/skills@abc1234)
+
+🔍 Running 2 skills on 5 files...
+
+  [1/2] code-quality
+    └─ src/api/users.ts... 2 findings ($0.02, 8.1K tokens)
+    └─ src/api/auth.ts... 1 finding ($0.01, 4.3K tokens)
+    └─ src/utils/jwt.ts... 1 finding ($0.01, 3.8K tokens)
+
+  [2/2] security-audit
+    └─ src/api/auth.ts... 1 finding ($0.01, 5.2K tokens)
+
+✓ code-quality: 3 findings
+✓ security-audit: 1 finding
+
+💰 Cost: $0.05 (21.4K tokens, 8.7K cached)
+```
+
+## Environment Variables
+
+### ANTHROPIC_API_KEY
+
+API key for authentication:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+warden
+```
+
+### WARDEN_ANTHROPIC_API_KEY
+
+Warden-specific API key (takes precedence):
+
+```bash
+export WARDEN_ANTHROPIC_API_KEY=sk-ant-...
+warden
+```
+
+### GITHUB_TOKEN
+
+GitHub token for API access:
+
+```bash
+export GITHUB_TOKEN=ghp_...
+warden
+```
+
+### NO_COLOR
+
+Disable colored output:
+
+```bash
+export NO_COLOR=1
+warden
+```
+
+## Tips
+
+<AccordionGroup>
+  <Accordion title="Analyze only changed files">
+    Use git diff syntax:
+
+    ```bash
+    warden main..HEAD
+    ```
+  </Accordion>
+
+  <Accordion title="Run specific skills">
+    Use `--skills` flag:
+
+    ```bash
+    warden --skills security-audit
+    ```
+  </Accordion>
+
+  <Accordion title="Save findings for later">
+    Use `--output` flag:
+
+    ```bash
+    warden --output logs/$(date +%Y%m%d).jsonl
+    ```
+  </Accordion>
+
+  <Accordion title="Control failure threshold">
+    Use `--fail-on` flag:
+
+    ```bash
+    # Fail on high or above
+    warden --fail-on high
+
+    # Never fail (report only)
+    warden --fail-on off
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Auto-fix" icon="wrench" href="/cli/fix">
+    Apply suggested fixes automatically
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/warden-toml">
+    Configure skill behavior
+  </Card>
+  <Card title="Output formats" icon="file-code" href="/advanced/output-formats">
+    JSON, JSONL, and GitHub outputs
+  </Card>
+  <Card title="Troubleshooting" icon="circle-question" href="/advanced/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

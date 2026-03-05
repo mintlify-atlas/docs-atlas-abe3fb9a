@@ -1,0 +1,366 @@
+---
+title: runSkill()
+description: Execute a skill on code changes using Claude Code SDK
+---
+
+The `runSkill()` function is the main entry point for executing Warden analysis. It runs a skill definition against an event context, analyzing each code hunk with Claude and aggregating the findings.
+
+## Function Signature
+
+```typescript
+async function runSkill(
+  skill: SkillDefinition,
+  context: EventContext,
+  options?: SkillRunnerOptions
+): Promise<SkillReport>
+```
+
+<ParamField path="skill" type="SkillDefinition" required>
+  The skill to execute. Load from disk using `resolveSkillAsync()`:
+  
+  ```typescript
+  import { resolveSkillAsync } from '@sentry/warden';
+  const skill = await resolveSkillAsync('security-review', repoPath);
+  ```
+</ParamField>
+
+<ParamField path="context" type="EventContext" required>
+  Event context containing repository info and code changes. Build using [`buildEventContext()`](/api/event-context):
+  
+  ```typescript
+  const context = await buildEventContext(
+    'pull_request',
+    webhookPayload,
+    repoPath,
+    octokit
+  );
+  ```
+</ParamField>
+
+<ParamField path="options" type="SkillRunnerOptions">
+  Execution options (see below)
+</ParamField>
+
+## SkillRunnerOptions
+
+Control skill execution behavior:
+
+<ParamField path="apiKey" type="string">
+  Anthropic API key. Falls back to `WARDEN_ANTHROPIC_API_KEY` env var. If not provided, uses Claude Code subscription (requires `claude login`).
+</ParamField>
+
+<ParamField path="model" type="string">
+  Model ID to use (e.g., `'claude-sonnet-4-20250514'`). Defaults to SDK's latest Sonnet model.
+</ParamField>
+
+<ParamField path="maxTurns" type="number" default="50">
+  Maximum agentic turns (API round-trips) per hunk analysis.
+</ParamField>
+
+<ParamField path="contextLines" type="number" default="3">
+  Lines of context to include around each hunk.
+</ParamField>
+
+<ParamField path="parallel" type="boolean" default="true">
+  Process files in parallel. Set to `false` for sequential processing.
+</ParamField>
+
+<ParamField path="concurrency" type="number" default="5">
+  Max concurrent file analyses when `parallel=true`.
+</ParamField>
+
+<ParamField path="batchDelayMs" type="number" default="0">
+  Delay in milliseconds between batch starts for rate limiting.
+</ParamField>
+
+<ParamField path="pathToClaudeCodeExecutable" type="string">
+  Path to `claude` CLI. Required in CI environments where the CLI isn't in PATH.
+</ParamField>
+
+<ParamField path="abortController" type="AbortController">
+  Abort controller for cancellation (e.g., on SIGINT).
+  
+  ```typescript
+  const controller = new AbortController();
+  process.on('SIGINT', () => controller.abort());
+  
+  await runSkill(skill, context, { abortController: controller });
+  ```
+</ParamField>
+
+<ParamField path="callbacks" type="SkillRunnerCallbacks">
+  Progress callbacks for UI updates:
+  
+  ```typescript
+  callbacks: {
+    onFileStart: (file, index, total) => {
+      console.log(`Analyzing ${file} (${index+1}/${total})`);
+    },
+    onHunkComplete: (file, hunkNum, findings, usage) => {
+      console.log(`  Hunk ${hunkNum}: ${findings.length} findings`);
+    },
+  }
+  ```
+</ParamField>
+
+<ParamField path="retry" type="RetryConfig">
+  Retry configuration for transient API failures:
+  
+  ```typescript
+  retry: {
+    maxRetries: 3,
+    initialDelayMs: 1000,
+    backoffMultiplier: 2,
+    maxDelayMs: 30000,
+  }
+  ```
+</ParamField>
+
+<ParamField path="auxiliaryMaxRetries" type="number" default="5">
+  Max retries for auxiliary Haiku calls (extraction repair, merging, fix evaluation).
+</ParamField>
+
+## Return Value
+
+Returns a `SkillReport` with findings, usage stats, and metadata:
+
+<ResponseField name="skill" type="string">
+  Skill name
+</ResponseField>
+
+<ResponseField name="summary" type="string">
+  Auto-generated summary (e.g., "security-review: Found 3 issues (2 high, 1 medium)")
+</ResponseField>
+
+<ResponseField name="findings" type="Finding[]">
+  Array of findings. Each finding has:
+  - `id`: Short unique identifier
+  - `severity`: `'high'` | `'medium'` | `'low'`
+  - `confidence`: `'high'` | `'medium'` | `'low'` (optional)
+  - `title`: Short description
+  - `description`: Detailed explanation
+  - `location`: File path and line range (optional)
+  - `suggestedFix`: Diff patch (optional)
+  - `verification`: How the issue was verified (optional)
+</ResponseField>
+
+<ResponseField name="usage" type="UsageStats">
+  Token usage and cost:
+  - `inputTokens`: Input tokens (non-cached portion)
+  - `outputTokens`: Generated tokens
+  - `cacheReadInputTokens`: Cache hits
+  - `cacheCreationInputTokens`: Cache writes
+  - `costUSD`: Total cost in USD
+</ResponseField>
+
+<ResponseField name="durationMs" type="number">
+  Total execution time in milliseconds
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  Model used for analysis
+</ResponseField>
+
+<ResponseField name="files" type="FileReport[]">
+  Per-file breakdown of findings, timing, and usage
+</ResponseField>
+
+<ResponseField name="skippedFiles" type="SkippedFile[]">
+  Files skipped due to chunking patterns
+</ResponseField>
+
+<ResponseField name="failedHunks" type="number">
+  Number of hunks that failed to analyze (SDK errors, API errors)
+</ResponseField>
+
+<ResponseField name="failedExtractions" type="number">
+  Number of hunks where findings extraction failed
+</ResponseField>
+
+<ResponseField name="auxiliaryUsage" type="AuxiliaryUsageMap">
+  Usage from auxiliary Haiku calls, keyed by agent name:
+  - `extraction`: JSON repair
+  - `merge`: Cross-location merging
+  - `fix_gate`: Suggested fix quality checks
+</ResponseField>
+
+## Example: Basic Usage
+
+```typescript
+import { runSkill, resolveSkillAsync, buildEventContext } from '@sentry/warden';
+import { Octokit } from '@octokit/rest';
+
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+const repoPath = '/path/to/repo';
+
+// Load skill
+const skill = await resolveSkillAsync('security-review', repoPath);
+
+// Build context from webhook
+const context = await buildEventContext(
+  'pull_request',
+  webhookPayload,
+  repoPath,
+  octokit
+);
+
+// Run analysis
+const report = await runSkill(skill, context, {
+  apiKey: process.env.WARDEN_ANTHROPIC_API_KEY,
+  model: 'claude-sonnet-4-20250514',
+  parallel: true,
+  concurrency: 5,
+});
+
+console.log(`Found ${report.findings.length} issues`);
+console.log(`Cost: $${report.usage.costUSD.toFixed(4)}`);
+console.log(`Duration: ${(report.durationMs / 1000).toFixed(1)}s`);
+```
+
+## Example: With Progress Callbacks
+
+```typescript
+const report = await runSkill(skill, context, {
+  apiKey: process.env.WARDEN_ANTHROPIC_API_KEY,
+  callbacks: {
+    onFileStart: (file, index, total) => {
+      console.log(`[${index+1}/${total}] Analyzing ${file}...`);
+    },
+    onHunkComplete: (file, hunkNum, findings, usage) => {
+      if (findings.length > 0) {
+        console.log(`  Found ${findings.length} issue(s)`);
+      }
+    },
+    onFileComplete: (file) => {
+      console.log(`  ✓ ${file}`);
+    },
+    onLargePrompt: (file, lineRange, chars, estTokens) => {
+      console.warn(`  ⚠ Large prompt at ${file}:${lineRange} (~${estTokens} tokens)`);
+    },
+  },
+});
+```
+
+## Example: With Abort Controller
+
+```typescript
+const controller = new AbortController();
+
+// Cancel on SIGINT
+process.on('SIGINT', () => {
+  console.log('\nAborting analysis...');
+  controller.abort();
+});
+
+try {
+  const report = await runSkill(skill, context, {
+    apiKey: process.env.WARDEN_ANTHROPIC_API_KEY,
+    abortController: controller,
+  });
+} catch (error) {
+  if (controller.signal.aborted) {
+    console.log('Analysis cancelled');
+  } else {
+    throw error;
+  }
+}
+```
+
+## analyzeFile()
+
+For finer control, analyze a single file's hunks:
+
+```typescript
+import { analyzeFile, prepareFiles } from '@sentry/warden';
+
+const { files } = prepareFiles(context, {
+  contextLines: 3,
+});
+
+for (const file of files) {
+  const result = await analyzeFile(
+    skill,
+    file,
+    repoPath,
+    { apiKey, model },
+    {
+      onHunkStart: (hunkNum, totalHunks, lineRange) => {
+        console.log(`  Hunk ${hunkNum}/${totalHunks} (${lineRange})`);
+      },
+    }
+  );
+  
+  console.log(`${file.filename}: ${result.findings.length} findings`);
+}
+```
+
+## Error Handling
+
+`runSkill()` throws `SkillRunnerError` on failures:
+
+```typescript
+import { runSkill, SkillRunnerError } from '@sentry/warden';
+
+try {
+  const report = await runSkill(skill, context, options);
+} catch (error) {
+  if (error instanceof SkillRunnerError) {
+    if (error.message.includes('authentication')) {
+      console.error('Auth failed. Set WARDEN_ANTHROPIC_API_KEY or run: claude login');
+    } else if (error.message.includes('All') && error.message.includes('failed')) {
+      console.error('All hunks failed. Check API key and network connectivity.');
+    } else {
+      console.error('Skill execution failed:', error.message);
+    }
+  } else {
+    throw error;
+  }
+}
+```
+
+## Performance Tips
+
+### Parallel Processing
+
+By default, files are analyzed in parallel with concurrency=5:
+
+```typescript
+// Fast: parallel with sliding window
+await runSkill(skill, context, {
+  parallel: true,    // default
+  concurrency: 5,    // default
+});
+
+// Slower: sequential
+await runSkill(skill, context, {
+  parallel: false,
+});
+```
+
+### Rate Limiting
+
+Add delays between batches to respect API rate limits:
+
+```typescript
+await runSkill(skill, context, {
+  parallel: true,
+  concurrency: 5,
+  batchDelayMs: 1000,  // 1s delay between batches
+});
+```
+
+### Context Lines
+
+Reduce context lines for faster analysis of large diffs:
+
+```typescript
+await runSkill(skill, context, {
+  contextLines: 1,  // minimal context (default: 3)
+});
+```
+
+## Related Functions
+
+- [`buildEventContext()`](/api/event-context) - Create event context for analysis
+- [`renderSkillReport()`](/api/output-rendering) - Format findings for output
+- [`matchTrigger()`](/api/trigger-matching) - Filter skills by trigger rules

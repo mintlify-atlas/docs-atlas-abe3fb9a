@@ -1,0 +1,411 @@
+---
+title: 'warden add'
+description: 'Add skills to warden.toml configuration'
+---
+
+# warden add
+
+Add AI analysis skills to your Warden configuration. Skills can be local (from `.agents/skills/`) or remote (from GitHub repositories).
+
+## Usage
+
+```bash
+# Interactive selection
+warden add
+
+# Add specific skill
+warden add <skill-name>
+
+# Add remote skill
+warden add --remote <owner/repo> --skill <skill-name>
+
+# List available skills
+warden add --list
+```
+
+## Options
+
+### Skill Selection
+
+<ParamField path="skill-name" type="string">
+  Name of the skill to add (positional argument or `--skill` flag)
+  
+  ```bash
+  warden add security-review
+  warden add --skill bug-detection
+  ```
+</ParamField>
+
+<ParamField path="--skill" type="string">
+  Skill name (alternative to positional argument)
+  
+  ```bash
+  warden add --skill security-review
+  ```
+</ParamField>
+
+### Remote Skills
+
+<ParamField path="--remote" type="string">
+  Remote repository reference for skills
+  
+  **Formats:**
+  - `owner/repo` - Latest version from default branch
+  - `owner/repo@sha` - Pinned to specific commit
+  - `https://github.com/owner/repo` - Full GitHub URL
+  
+  ```bash
+  warden add --remote getsentry/skills --skill security-review
+  warden add --remote getsentry/skills@abc123 --skill bug-detection
+  warden add --remote https://github.com/getsentry/skills --skill performance
+  ```
+</ParamField>
+
+### Display
+
+<ParamField path="--list" type="boolean" default="false">
+  List all available skills and exit
+  
+  ```bash
+  warden add --list                    # Local skills
+  warden add --remote owner/repo --list  # Remote skills
+  ```
+</ParamField>
+
+<ParamField path="--force" type="boolean" default="false">
+  Bypass skill cache and fetch latest from remote (for remote skills)
+  
+  ```bash
+  warden add --remote owner/repo --skill name --force
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean" default="false">
+  Suppress non-error output
+  
+  ```bash
+  warden add security-review --quiet
+  ```
+</ParamField>
+
+<ParamField path="--color / --no-color" type="boolean">
+  Force color output on or off
+  
+  ```bash
+  warden add --no-color
+  ```
+</ParamField>
+
+## Local Skills
+
+Local skills are discovered from:
+- `.agents/skills/`
+- `.claude/skills/`
+
+### Interactive Selection
+
+When run without arguments in an interactive terminal, `add` displays a menu:
+
+```bash
+$ warden add
+
+ADD SKILL
+
+› security-review [.agents/skills]
+    Detects security vulnerabilities and unsafe patterns
+  bug-detection [.agents/skills]
+    Finds logic errors and potential bugs
+  ✓ code-quality [.agents/skills] (already configured)
+    Reviews code quality and maintainability
+```
+
+Use arrow keys to navigate, Enter to select, or Ctrl+C to cancel.
+
+### List Available Skills
+
+```bash
+$ warden add --list
+
+Available Skills
+
+  ✓ bug-detection [.agents/skills] (already configured)
+    Finds logic errors and potential bugs
+    
+    code-quality [.agents/skills]
+    Reviews code quality and maintainability
+    
+    security-review [.agents/skills]
+    Detects security vulnerabilities and unsafe patterns
+```
+
+### Add Specific Skill
+
+```bash
+warden add security-review
+```
+
+Output:
+
+```
+✓ Added skill 'security-review' to warden.toml
+
+The skill will run on pull requests.
+Edit warden.toml to customize filters and output options.
+```
+
+## Remote Skills
+
+Remote skills are fetched from GitHub repositories and cached locally in `.warden/skills/`.
+
+### Add from Remote Repository
+
+```bash
+# Latest version
+warden add --remote getsentry/skills --skill security-review
+
+# Pinned version
+warden add --remote getsentry/skills@abc123 --skill security-review
+
+# Full URL
+warden add --remote https://github.com/getsentry/skills --skill security-review
+```
+
+Output:
+
+```
+Fetching skills from getsentry/skills...
+✓ Found 5 skills
+
+✓ Added skill 'security-review' to warden.toml
+
+The skill will run on pull requests using skill from getsentry/skills.
+Edit warden.toml to customize filters and output options.
+```
+
+### List Remote Skills
+
+```bash
+$ warden add --remote getsentry/skills --list
+
+Fetching skills from getsentry/skills...
+✓ Found 5 skills
+
+Available Skills from getsentry/skills
+
+    api-security
+    Reviews API endpoints for security issues
+    
+    bug-detection
+    Finds logic errors and potential bugs
+    
+  ✓ security-review (already configured)
+    Detects security vulnerabilities and unsafe patterns
+```
+
+### Force Refresh Remote Cache
+
+Bypass the cache to fetch the latest version:
+
+```bash
+warden add --remote owner/repo --skill name --force
+```
+
+## Configuration Format
+
+Skills are appended to `warden.toml` with default triggers:
+
+### Local Skill
+
+```toml
+[[skills]]
+name = "security-review"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+```
+
+### Remote Skill
+
+```toml
+[[skills]]
+name = "security-review"
+remote = "getsentry/skills"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+```
+
+### Pinned Remote Skill
+
+```toml
+[[skills]]
+name = "security-review"
+remote = "getsentry/skills@abc123def456"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+```
+
+## Customization
+
+After adding a skill, edit `warden.toml` to customize:
+
+### Path Filters
+
+```toml
+[[skills]]
+name = "security-review"
+paths = ["src/**/*.ts", "src/**/*.tsx"]
+ignorePaths = ["**/*.test.ts", "**/__fixtures__/**"]
+```
+
+### Severity Thresholds
+
+```toml
+[[skills]]
+name = "security-review"
+failOn = "high"      # Override default
+reportOn = "medium"  # Override default
+```
+
+### Multiple Triggers
+
+```toml
+[[skills]]
+name = "security-review"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+
+[[skills.triggers]]
+type = "push"
+branches = ["main", "develop"]
+```
+
+## Exit Codes
+
+<ResponseField name="0" type="Success">
+  - Skill added successfully
+  - Skill already configured (no changes)
+  - List displayed successfully
+</ResponseField>
+
+<ResponseField name="1" type="Error">
+  - Not in a git repository
+  - `warden.toml` not found (run `warden init` first)
+  - Skill not found
+  - Invalid remote reference
+  - Network error fetching remote
+</ResponseField>
+
+## Examples
+
+### Interactive Workflow
+
+```bash
+# Initialize Warden
+warden init
+
+# Add skill interactively
+warden add
+
+# List configured skills in warden.toml
+cat warden.toml
+```
+
+### Non-Interactive
+
+```bash
+# Add specific skill
+warden add security-review
+
+# Add multiple skills
+warden add security-review
+warden add bug-detection
+warden add code-quality
+```
+
+### Remote Skills
+
+```bash
+# Browse available skills
+warden add --remote getsentry/skills --list
+
+# Add remote skill
+warden add --remote getsentry/skills --skill api-security
+
+# Pin to specific version
+warden add --remote getsentry/skills@abc123 --skill api-security
+
+# Update to latest (re-add with --force)
+warden add --remote getsentry/skills --skill api-security --force
+```
+
+### Automation
+
+```bash
+# Add skills in CI/CD
+warden add security-review --quiet
+warden add bug-detection --quiet
+
+# Verify configuration
+warden --skill security-review --dry-run
+```
+
+## Requirements
+
+- Must run from a git repository
+- `warden.toml` must exist (run `warden init` first) - except when using `--list` without `--remote`
+- For local skills: Skills must exist in `.agents/skills/` or `.claude/skills/`
+- For remote skills: Network access (unless using `--offline` with cached skills)
+
+## Skill Discovery
+
+Warden discovers skills by reading `SKILL.md` files:
+
+```
+.agents/skills/
+├── security-review/
+│   ├── SKILL.md          # Skill definition
+│   └── references/       # Additional context files
+└── bug-detection/
+    └── SKILL.md
+```
+
+Each `SKILL.md` must include:
+```markdown
+---
+name: security-review
+description: Detects security vulnerabilities and unsafe patterns
+---
+```
+
+## Remote Caching
+
+Remote skills are cached in `.warden/skills/` after first fetch:
+
+```
+.warden/
+├── skills/
+│   └── getsentry-skills-abc123/
+│       ├── security-review/
+│       └── bug-detection/
+└── state.json  # Cache metadata
+```
+
+Cache benefits:
+- Offline usage with `--offline` flag
+- Faster repeated operations
+- Consistent versions across team
+
+Update cache with [warden sync](/api/cli/sync).
+
+## Related Commands
+
+- [warden init](/api/cli/init) - Initialize warden.toml
+- [warden sync](/api/cli/sync) - Update cached remote skills
+- [warden](/api/cli/warden) - Run analysis with configured skills

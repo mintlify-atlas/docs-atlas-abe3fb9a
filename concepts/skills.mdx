@@ -1,0 +1,335 @@
+---
+title: Skills
+description: What skills are, how they work, and how to structure them
+---
+
+## What are Skills?
+
+Skills are Claude-powered code analysis agents that review your codebase. Each skill is a self-contained expert that knows what to look for and how to report it. Skills are defined using the [agentskills.io](https://agentskills.io) specification and can be shared across projects.
+
+Think of skills as specialized reviewers: one might check for security issues, another for performance problems, and another for code style consistency.
+
+## How Skills Work
+
+<Steps>
+  <Step title="Discovery">
+    Warden discovers skills from conventional directories in your repository:
+    - `.agents/skills/` (recommended)
+    - `.claude/skills/` (Claude Code convention)
+    - `.warden/skills/` (legacy)
+    
+    Skills found in earlier directories take precedence when names conflict.
+  </Step>
+  
+  <Step title="Resolution">
+    Skills can be referenced by:
+    - **Name**: `find-warden-bugs` (searches conventional directories)
+    - **Path**: `./custom/my-skill.md` or `custom/my-skill/SKILL.md`
+    - **Remote**: `owner/repo` or `owner/repo@sha` (fetched from GitHub)
+  </Step>
+  
+  <Step title="Execution">
+    When a trigger matches, Warden:
+    1. Loads the skill definition (name, description, prompt, tools)
+    2. Prepares relevant files from the diff or repository
+    3. Analyzes each file hunk with the Claude SDK
+    4. Extracts findings from the model's JSON output
+    5. Validates findings fall within analyzed line ranges
+    6. Deduplicates and merges related findings
+  </Step>
+  
+  <Step title="Reporting">
+    Findings are reported through:
+    - **CLI**: Terminal output with severity badges and locations
+    - **GitHub Action**: Inline PR comments with annotations
+    - **JSON/JSONL**: Machine-readable output for CI integration
+    - **Log files**: Detailed execution logs with timing and usage stats
+  </Step>
+</Steps>
+
+## Skill Structure
+
+Skills follow the agentskills.io format with YAML frontmatter and Markdown body:
+
+### Directory Format (Recommended)
+
+```
+.agents/skills/
+└── find-warden-bugs/
+    ├── SKILL.md          # Skill definition (required)
+    ├── scripts/          # Helper scripts (optional)
+    ├── references/       # Reference docs (optional)
+    └── assets/          # Images, examples (optional)
+```
+
+### Flat File Format
+
+```
+.agents/skills/
+└── find-warden-bugs.md   # Skill definition
+```
+
+### Skill Definition Format
+
+```markdown
+---
+name: find-warden-bugs
+description: "Detects bugs at architectural seams using historical patterns"
+allowed-tools: Read Grep Glob
+---
+
+You are an expert bug hunter who knows Warden's architecture intimately.
+
+## Scope
+
+You receive scoped code chunks from Warden's diff pipeline. Analyze each
+chunk against the checks below.
+
+## Checks
+
+### Check 1: SDK Response Shape Assumptions
+
+**Severity:** high | **Historical commits:** 5+
+
+Claude SDK responses have a specific shape...
+
+[More detailed prompt content]
+```
+
+<Note>
+  The `name` field in frontmatter must match your skill configuration in `warden.toml`.
+</Note>
+
+## Skill Types
+
+### Analysis Skills
+
+Most skills analyze code changes and report findings:
+
+```markdown
+---
+name: security-audit
+description: "Detects common security vulnerabilities"
+allowed-tools: Read Grep
+---
+
+Analyze the code for:
+- SQL injection risks
+- XSS vulnerabilities
+- Hardcoded credentials
+...
+```
+
+### Verification Skills
+
+Some skills verify fixes or validate behavior:
+
+```markdown
+---
+name: test-coverage
+description: "Ensures new code has tests"
+allowed-tools: Read Glob Bash
+---
+
+For each new function:
+1. Search for corresponding test files
+2. Verify test coverage exists
+3. Report if coverage is missing
+...
+```
+
+## Tool Configuration
+
+Skills can restrict which tools Claude can use:
+
+```yaml
+---
+name: readonly-analyzer
+allowed-tools: Read Grep Glob
+---
+```
+
+**Available tools:**
+- `Read` - Read file contents
+- `Write` - Create/overwrite files
+- `Edit` - Modify existing files
+- `Bash` - Execute shell commands
+- `Glob` - Find files by pattern
+- `Grep` - Search file contents
+- `WebFetch` - Fetch URLs (if enabled)
+- `WebSearch` - Search the web (if enabled)
+
+<Warning>
+  By default, skills have access to all tools. Use `allowed-tools` to restrict access and prevent unintended modifications.
+</Warning>
+
+## Resource Directories
+
+Skills can bundle additional resources:
+
+### `scripts/`
+
+Executable scripts that Claude can call:
+
+```bash
+# .agents/skills/my-skill/scripts/analyze.sh
+#!/bin/bash
+grep -rn "TODO" src/
+```
+
+Reference in prompt:
+```
+Run `./scripts/analyze.sh` to find TODO comments.
+```
+
+### `references/`
+
+Documentation and reference materials:
+
+```
+references/
+├── api-spec.md
+├── architecture.md
+└── style-guide.md
+```
+
+Reference in prompt:
+```
+Consult `references/style-guide.md` for naming conventions.
+```
+
+### `assets/`
+
+Images, examples, and other static files:
+
+```
+assets/
+├── example-good.ts
+└── example-bad.ts
+```
+
+<Note>
+  Resource paths are resolved relative to the skill's root directory (`rootDir` in the loaded definition).
+</Note>
+
+## Remote Skills
+
+Skills can be loaded from GitHub repositories:
+
+```toml
+[[skills]]
+name = "code-simplifier"
+remote = "getsentry/sentry-skills"
+
+[[skills]]
+name = "security-audit"
+remote = "org/security-skills@v1.2.3"  # Pin to specific tag
+```
+
+Remote skills are cached in:
+- **macOS/Linux**: `~/.cache/warden/skills/`
+- **Windows**: `%LOCALAPPDATA%\warden\skills\`
+
+Cache TTL:
+- **Tags/SHAs**: 30 days (immutable references)
+- **Branches**: 1 hour (may change)
+
+<Accordion title="How remote skill resolution works">
+  1. Parse reference: `owner/repo[@ref]` where ref defaults to `HEAD`
+  2. Check cache: If cached and not expired, use cached version
+  3. Fetch archive: Download tarball from GitHub
+  4. Extract and discover: Find SKILL.md files in skills/ directory
+  5. Cache and load: Store in cache with metadata
+</Accordion>
+
+## Skill Configuration in `warden.toml`
+
+Skills are configured with triggers, path filters, and output options:
+
+```toml
+[[skills]]
+name = "find-warden-bugs"
+paths = ["src/**/*.ts"]           # Only analyze TypeScript
+ignorePaths = ["src/**/*.test.ts"] # Skip test files
+failOn = "high"                    # Fail on high severity
+reportOn = "medium"                # Show medium+
+maxFindings = 50                   # Limit output
+model = "claude-sonnet-4"          # Override model
+maxTurns = 30                      # Limit API calls
+minConfidence = "medium"           # Filter low confidence
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+See [Configuration](/concepts/configuration) for complete schema.
+
+## Type Definitions
+
+From `src/config/schema.ts:24-33`:
+
+```typescript
+export const SkillDefinitionSchema = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  prompt: z.string(),
+  tools: ToolConfigSchema.optional(),
+  /** Directory where the skill was loaded from */
+  rootDir: z.string().optional(),
+});
+export type SkillDefinition = z.infer<typeof SkillDefinitionSchema>;
+```
+
+Tool configuration from `src/config/schema.ts:5-22`:
+
+```typescript
+export const ToolNameSchema = z.enum([
+  'Read', 'Write', 'Edit', 'Bash',
+  'Glob', 'Grep', 'WebFetch', 'WebSearch',
+]);
+
+export const ToolConfigSchema = z.object({
+  allowed: z.array(ToolNameSchema).optional(),
+  denied: z.array(ToolNameSchema).optional(),
+});
+```
+
+## Best Practices
+
+<Card title="Keep Skills Focused" icon="target">
+  Each skill should have a single responsibility. Better to have 5 focused skills than 1 that does everything.
+</Card>
+
+<Card title="Use Historical Patterns" icon="clock-rotate-left">
+  Base checks on real bugs from your project history. The best skills know what actually breaks.
+</Card>
+
+<Card title="Calibrate Confidence" icon="gauge-high">
+  Use confidence levels to distinguish proven issues (high) from possible concerns (medium/low).
+</Card>
+
+<Card title="Provide Examples" icon="code">
+  Include both good and bad examples in your prompt. Show what to look for and what to ignore.
+</Card>
+
+<Card title="Test with Evals" icon="flask">
+  Write eval specs (YAML) to verify your skill catches known issues. See `evals/README.md`.
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Triggers" icon="bolt" href="/concepts/triggers">
+    Learn how to control when skills run
+  </Card>
+  <Card title="Findings" icon="magnifying-glass" href="/concepts/findings">
+    Understand how findings are structured and reported
+  </Card>
+  <Card title="Configuration" icon="gear" href="/concepts/configuration">
+    Explore all configuration options
+  </Card>
+  <Card title="Skill Creator" icon="wand-magic-sparkles" href="/skills/skill-creator">
+    Use the skill-creator agent to write new skills
+  </Card>
+</CardGroup>

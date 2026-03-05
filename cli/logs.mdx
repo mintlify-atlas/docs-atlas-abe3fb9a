@@ -1,0 +1,350 @@
+---
+title: "warden logs"
+description: "Manage analysis logs and review historical findings"
+---
+
+## Overview
+
+The `warden logs` command manages JSONL log files from previous analyses. View, filter, and clean up historical findings.
+
+## Usage
+
+```bash
+warden logs <subcommand> [options]
+```
+
+## Subcommands
+
+### list
+
+List all log files:
+
+```bash
+warden logs list
+```
+
+Output:
+
+```
+📄 Found 5 log files:
+
+  20240315-143022.jsonl  (2.3 MB)  3 skills, 12 findings  $0.15
+  20240314-091245.jsonl  (1.8 MB)  2 skills,  8 findings  $0.12
+  20240313-164508.jsonl  (3.1 MB)  4 skills, 15 findings  $0.21
+  20240312-112033.jsonl  (1.2 MB)  2 skills,  5 findings  $0.08
+  20240311-085519.jsonl  (2.8 MB)  3 skills, 11 findings  $0.18
+
+Total: 9.2 MB, 51 findings, $0.74
+```
+
+### show
+
+Display contents of a log file:
+
+```bash
+warden logs show <file>
+```
+
+Example:
+
+```bash
+warden logs show 20240315-143022.jsonl
+```
+
+Output:
+
+```
+📄 Log: 20240315-143022.jsonl
+
+⚡ Run metadata:
+  Started:  2024-03-15 14:30:22
+  Duration: 45s
+  Cost:     $0.15 (52.3K tokens)
+
+🔍 Skills:
+  ✓ code-quality: 8 findings ($0.08, 28.1K tokens)
+  ✓ security-audit: 4 findings ($0.07, 24.2K tokens)
+
+🔍 Findings:
+
+  [high] src/api/auth.ts:12 - Hardcoded secret
+  [high] src/utils/jwt.ts:89 - Weak signature algorithm
+  [medium] src/api/users.ts:45 - Missing error handling
+  ...
+```
+
+### gc
+
+Garbage collect old log files:
+
+```bash
+warden logs gc [options]
+```
+
+Options:
+
+- `--keep <n>`: Keep N most recent files (default: 10)
+- `--days <n>`: Keep files from last N days (default: 30)
+- `--dry-run`: Show what would be deleted
+
+Example:
+
+```bash
+# Keep only last 5 files
+warden logs gc --keep 5
+
+# Keep files from last 7 days
+warden logs gc --days 7
+
+# See what would be deleted
+warden logs gc --keep 5 --dry-run
+```
+
+## Log File Format
+
+Log files use JSONL (JSON Lines) format:
+
+```jsonl
+{"type":"run","runId":"abc123","startedAt":"2024-03-15T14:30:22Z",...}
+{"type":"skill","skill":"code-quality","findings":[],...}
+{"type":"skill","skill":"security-audit","findings":[],...}
+{"type":"summary","totalFindings":12,"cost":0.15,...}
+```
+
+Each line is a JSON object:
+
+### Run record
+
+```json
+{
+  "type": "run",
+  "runId": "abc123",
+  "startedAt": "2024-03-15T14:30:22Z",
+  "config": {
+    "failOn": "high",
+    "reportOn": "medium"
+  }
+}
+```
+
+### Skill record
+
+```json
+{
+  "type": "skill",
+  "skill": "code-quality",
+  "findings": [
+    {
+      "id": "finding-1",
+      "severity": "high",
+      "title": "Hardcoded secret",
+      "location": {
+        "path": "src/api/auth.ts",
+        "startLine": 12
+      }
+    }
+  ],
+  "usage": {
+    "inputTokens": 15234,
+    "outputTokens": 892,
+    "costUSD": 0.08
+  }
+}
+```
+
+### Summary record
+
+```json
+{
+  "type": "summary",
+  "totalFindings": 12,
+  "highCount": 3,
+  "mediumCount": 7,
+  "lowCount": 2,
+  "cost": 0.15,
+  "durationMs": 45230
+}
+```
+
+## Use Cases
+
+### Compare runs
+
+Compare findings across runs:
+
+```bash
+# Show two runs side by side
+warden logs show 20240315-143022.jsonl > current.txt
+warden logs show 20240314-091245.jsonl > previous.txt
+diff current.txt previous.txt
+```
+
+### Track cost over time
+
+```bash
+warden logs list | grep 'Total:'
+```
+
+Output:
+
+```
+Total: 9.2 MB, 51 findings, $0.74
+```
+
+### Filter findings
+
+Use `jq` to filter JSONL:
+
+```bash
+# Extract high-severity findings
+cat .warden/logs/20240315-143022.jsonl | \
+  jq -r 'select(.type == "skill") | .findings[] | select(.severity == "high")'
+
+# Count findings by severity
+cat .warden/logs/20240315-143022.jsonl | \
+  jq -r 'select(.type == "skill") | .findings[].severity' | \
+  sort | uniq -c
+```
+
+### Archive logs
+
+```bash
+# Archive old logs
+mkdir -p archive
+find .warden/logs -name '*.jsonl' -mtime +30 -exec mv {} archive/ \;
+
+# Compress archives
+tar -czf logs-$(date +%Y%m).tar.gz archive/
+```
+
+## Configuration
+
+Log file location is configured in `warden.toml`:
+
+```toml warden.toml
+[logs]
+retentionDays = 30
+maxFiles = 10
+path = ".warden/logs"
+```
+
+See [Configuration Reference](/configuration/warden-toml#logs) for details.
+
+## Automatic Cleanup
+
+Warden automatically cleans up old logs based on configuration:
+
+```toml warden.toml
+[logs]
+retentionDays = 30  # Delete logs older than 30 days
+maxFiles = 10       # Keep at most 10 files
+```
+
+Runs during:
+- `warden` (main command)
+- `warden logs gc`
+
+## Examples
+
+### List recent runs
+
+```bash
+$ warden logs list
+
+📄 Found 5 log files:
+
+  20240315-143022.jsonl  (2.3 MB)  3 skills, 12 findings  $0.15
+  20240314-091245.jsonl  (1.8 MB)  2 skills,  8 findings  $0.12
+  20240313-164508.jsonl  (3.1 MB)  4 skills, 15 findings  $0.21
+```
+
+### Show specific run
+
+```bash
+$ warden logs show 20240315-143022.jsonl
+
+📄 Log: 20240315-143022.jsonl
+
+⚡ Run metadata:
+  Started:  2024-03-15 14:30:22
+  Duration: 45s
+  Cost:     $0.15 (52.3K tokens)
+```
+
+### Clean up old logs
+
+```bash
+$ warden logs gc --days 7
+
+🗑️ Cleaning up logs older than 7 days...
+
+  Deleting 20240301-112033.jsonl (1.2 MB)
+  Deleting 20240302-085519.jsonl (2.8 MB)
+
+✓ Deleted 2 files (4.0 MB freed)
+```
+
+### Dry run cleanup
+
+```bash
+$ warden logs gc --keep 3 --dry-run
+
+🗑️ Would delete:
+
+  20240312-112033.jsonl (1.2 MB)
+  20240311-085519.jsonl (2.8 MB)
+
+Run without --dry-run to delete
+```
+
+## Tips
+
+<AccordionGroup>
+  <Accordion title="Parse logs with jq">
+    JSONL format is easy to parse:
+
+    ```bash
+    # Extract all finding titles
+    cat log.jsonl | jq -r 'select(.type == "skill") | .findings[].title'
+
+    # Calculate total cost
+    cat log.jsonl | jq -r 'select(.type == "skill") | .usage.costUSD' | awk '{s+=$1} END {print s}'
+    ```
+  </Accordion>
+
+  <Accordion title="Compare historical trends">
+    Track findings over time:
+
+    ```bash
+    for f in .warden/logs/*.jsonl; do
+      echo "$f: $(jq -r 'select(.type == "summary") | .totalFindings' $f)"
+    done
+    ```
+  </Accordion>
+
+  <Accordion title="Archive before cleanup">
+    Backup logs before garbage collection:
+
+    ```bash
+    tar -czf logs-backup.tar.gz .warden/logs/
+    warden logs gc --keep 5
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Output formats" icon="file-code" href="/advanced/output-formats">
+    JSONL format specification
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/warden-toml">
+    Configure log retention
+  </Card>
+  <Card title="Main command" icon="terminal" href="/cli/analyze">
+    Run analysis and generate logs
+  </Card>
+  <Card title="Cost tracking" icon="dollar-sign" href="/advanced/cost-tracking">
+    Understanding usage costs
+  </Card>
+</CardGroup>

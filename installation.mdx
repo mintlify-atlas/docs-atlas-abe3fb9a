@@ -1,0 +1,282 @@
+---
+title: "Installation"
+description: "Install Warden and set up authentication for local and CI environments"
+---
+
+## Installation Methods
+
+Warden can be run via `npx` without installation, or installed globally for convenience.
+
+### Run via npx (recommended)
+
+No installation required - run Warden directly:
+
+<CodeGroup>
+```bash npm
+npx warden
+```
+
+```bash pnpm
+pnpm dlx warden
+```
+
+```bash yarn
+yarn dlx warden
+```
+</CodeGroup>
+
+### Install globally
+
+Install Warden globally for faster execution:
+
+<CodeGroup>
+```bash npm
+npm install -g @sentry/warden
+warden --version
+```
+
+```bash pnpm
+pnpm add -g @sentry/warden
+warden --version
+```
+
+```bash yarn
+yarn global add @sentry/warden
+warden --version
+```
+</CodeGroup>
+
+### Install as dev dependency
+
+Add Warden to your project's dev dependencies:
+
+<CodeGroup>
+```bash npm
+npm install --save-dev @sentry/warden
+```
+
+```bash pnpm
+pnpm add -D @sentry/warden
+```
+
+```bash yarn
+yarn add -D @sentry/warden
+```
+</CodeGroup>
+
+Then add a script to `package.json`:
+
+```json package.json
+{
+  "scripts": {
+    "warden": "warden",
+    "warden:fix": "warden --fix"
+  }
+}
+```
+
+## Authentication
+
+Warden requires authentication with Anthropic's API to use Claude. You have two options:
+
+### Option 1: Claude Code CLI (recommended for local)
+
+If you have the Claude Code CLI installed and are logged in, Warden automatically uses your subscription.
+
+**Install Claude Code CLI:**
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+**Log in:**
+
+```bash
+claude auth login
+```
+
+**Verify authentication:**
+
+```bash
+npx warden
+```
+
+If authentication succeeds, Warden runs without requiring an API key.
+
+<Note>
+Claude Code CLI provides a better local development experience with automatic credential refresh and no API key management.
+</Note>
+
+### Option 2: API Key
+
+Get an API key from the [Anthropic Console](https://console.anthropic.com/) and set it via environment variable.
+
+**Set the environment variable:**
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+npx warden
+```
+
+Or use the Warden-specific variable:
+
+```bash
+export WARDEN_ANTHROPIC_API_KEY=sk-ant-...
+npx warden
+```
+
+<Warning>
+Never commit API keys to version control. Use environment variables or secret management tools.
+</Warning>
+
+### Precedence
+
+Warden checks for credentials in this order:
+
+1. `WARDEN_ANTHROPIC_API_KEY` environment variable
+2. `ANTHROPIC_API_KEY` environment variable
+3. `CLAUDE_CODE_OAUTH_TOKEN` environment variable
+4. Claude Code CLI session (if logged in)
+
+## GitHub Action Setup
+
+To use Warden in GitHub Actions, add your API key as a repository secret.
+
+<Steps>
+  <Step title="Get an API key">
+    Go to the [Anthropic Console](https://console.anthropic.com/) and create an API key.
+  </Step>
+
+  <Step title="Add secret to GitHub">
+    1. Go to your repository **Settings → Secrets and variables → Actions**
+    2. Click **New repository secret**
+    3. Name: `ANTHROPIC_API_KEY`
+    4. Value: Your API key (starts with `sk-ant-`)
+    5. Click **Add secret**
+  </Step>
+
+  <Step title="Configure the workflow">
+    Create or update `.github/workflows/warden.yml`:
+
+    ```yaml .github/workflows/warden.yml
+    name: Warden
+    on:
+      pull_request:
+        types: [opened, synchronize, reopened]
+
+    jobs:
+      warden:
+        runs-on: ubuntu-latest
+        permissions:
+          contents: read
+          pull-requests: write
+        steps:
+          - uses: actions/checkout@v4
+          - uses: getsentry/warden@v1
+            with:
+              anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    ```
+  </Step>
+
+  <Step title="Test the setup">
+    Open a pull request to trigger the workflow. Warden will:
+    - Analyze the PR diff
+    - Post findings as review comments
+    - Create a summary comment
+  </Step>
+</Steps>
+
+<Tip>
+Run `npx warden init` to automatically create the workflow file.
+</Tip>
+
+## GitHub App Setup (advanced)
+
+For better GitHub integration and finer-grained permissions, set up a GitHub App instead of using `GITHUB_TOKEN`.
+
+<Steps>
+  <Step title="Run the setup command">
+    ```bash
+    npx warden setup-app
+    ```
+
+    This launches an interactive wizard that:
+    1. Opens your browser to create a GitHub App
+    2. Configures the app with required permissions
+    3. Exchanges credentials for an installation token
+    4. Stores the token locally
+  </Step>
+
+  <Step title="Benefits over GITHUB_TOKEN">
+    GitHub Apps provide:
+    - Better rate limits (5,000 requests/hour vs 1,000)
+    - Finer-grained permissions
+    - Visible attribution (comments show as your app)
+    - Token refresh without re-authentication
+  </Step>
+
+  <Step title="Use in workflows">
+    The stored credentials work automatically in both CLI and CI environments.
+  </Step>
+</Steps>
+
+See the [setup-app command reference](/api/cli/setup-app) for details.
+
+## System Requirements
+
+- **Node.js**: 20.0.0 or later
+- **Operating systems**: Linux, macOS, Windows (WSL recommended)
+- **Git**: Required for diff analysis
+
+Verify your Node.js version:
+
+```bash
+node --version
+```
+
+If you need to upgrade Node.js, use [nvm](https://github.com/nvm-sh/nvm):
+
+```bash
+nvm install 20
+nvm use 20
+```
+
+## Verification
+
+Verify your installation and authentication:
+
+```bash
+# Check version
+npx warden --version
+
+# Run a simple analysis
+npx warden --help
+
+# Test authentication
+npx warden
+```
+
+If authentication fails, you'll see:
+
+```
+❌ Authentication failed: Invalid API key or Claude Code CLI not logged in
+```
+
+See the [authentication guide](/advanced/authentication) for troubleshooting.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run your first analysis in 5 minutes
+  </Card>
+  <Card title="Initialize configuration" icon="gear" href="/cli/init">
+    Create warden.toml and workflows
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/cli/overview">
+    Learn all CLI commands
+  </Card>
+  <Card title="Authentication troubleshooting" icon="shield-halved" href="/advanced/authentication">
+    Resolve authentication issues
+  </Card>
+</CardGroup>

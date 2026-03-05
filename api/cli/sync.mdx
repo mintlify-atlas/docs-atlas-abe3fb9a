@@ -1,0 +1,398 @@
+---
+title: 'warden sync'
+description: 'Update cached remote skills to latest versions'
+---
+
+# warden sync
+
+Update cached remote skills to their latest versions. Syncs unpinned remote skills from GitHub repositories to ensure you have the most recent versions.
+
+## Usage
+
+```bash
+# Sync all remote skills
+warden sync
+
+# Sync specific remote
+warden sync <remote>
+warden sync --remote <remote>
+```
+
+## What It Does
+
+1. **Identifies cached remotes** - Finds all remote skills in `.warden/skills/`
+2. **Checks for updates** - Fetches latest commit SHA from GitHub
+3. **Updates unpinned remotes** - Downloads new versions if SHA changed
+4. **Preserves pinned remotes** - Skips skills pinned to specific commits
+
+## Arguments
+
+<ParamField path="remote" type="string">
+  Remote repository to sync (optional). Can be specified as positional argument or `--remote` flag.
+  
+  **Formats:**
+  - `owner/repo` - Repository in `owner/repo` format
+  - `https://github.com/owner/repo` - Full GitHub URL
+  
+  ```bash
+  warden sync getsentry/skills
+  warden sync --remote getsentry/skills
+  warden sync https://github.com/getsentry/skills
+  ```
+</ParamField>
+
+## Options
+
+<ParamField path="--remote" type="string">
+  Alternative way to specify remote (same as positional argument)
+  
+  ```bash
+  warden sync --remote owner/repo
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean" default="false">
+  Suppress non-error output
+  
+  ```bash
+  warden sync --quiet
+  ```
+</ParamField>
+
+<ParamField path="--color / --no-color" type="boolean">
+  Force color output on or off
+  
+  ```bash
+  warden sync --no-color
+  ```
+</ParamField>
+
+## Remote Types
+
+### Unpinned Remotes
+
+Remotes without a specific SHA are automatically updated:
+
+```toml
+[[skills]]
+name = "security-review"
+remote = "getsentry/skills"  # No @sha - will be synced
+```
+
+```bash
+$ warden sync
+
+SYNC REMOTE SKILLS
+
+Syncing getsentry/skills...
+getsentry/skills: updated abc1234 -> def5678
+
+✓ Updated 1 remote.
+```
+
+### Pinned Remotes
+
+Remotes pinned to a specific commit SHA are skipped:
+
+```toml
+[[skills]]
+name = "security-review"
+remote = "getsentry/skills@abc123def456"  # Pinned - won't be synced
+```
+
+```bash
+$ warden sync
+
+SYNC REMOTE SKILLS
+
+All cached remotes are pinned to specific versions.
+Pinned remotes do not need syncing as they are immutable.
+  - getsentry/skills@abc123def456 (pinned)
+```
+
+## Exit Codes
+
+<ResponseField name="0" type="Success">
+  - All remotes synced successfully
+  - No remotes to sync
+  - All remotes already up to date
+</ResponseField>
+
+<ResponseField name="1" type="Error">
+  - Network error fetching remote
+  - Invalid remote reference
+  - Remote not found in cache
+  - One or more remotes failed to sync
+</ResponseField>
+
+## Examples
+
+### Sync All Remotes
+
+```bash
+$ warden sync
+
+SYNC REMOTE SKILLS
+
+Syncing getsentry/skills...
+getsentry/skills: updated abc1234 -> def5678
+
+Syncing acme/custom-skills...
+acme/custom-skills: already up to date
+
+Skipped pinned remotes:
+  - other/repo@xyz9876
+
+✓ Updated 1 remote.
+```
+
+### Sync Specific Remote
+
+```bash
+$ warden sync getsentry/skills
+
+SYNC REMOTE SKILLS
+
+Syncing getsentry/skills...
+getsentry/skills: updated abc1234 -> def5678
+
+✓ Updated 1 remote.
+```
+
+### All Up to Date
+
+```bash
+$ warden sync
+
+SYNC REMOTE SKILLS
+
+Syncing getsentry/skills...
+getsentry/skills: already up to date
+
+Syncing acme/custom-skills...
+acme/custom-skills: already up to date
+
+✓ All remotes up to date.
+```
+
+### No Remote Skills
+
+```bash
+$ warden sync
+
+No remote skills cached.
+Add remote skills with: warden add --remote owner/repo --skill name
+```
+
+### Network Error
+
+```bash
+$ warden sync
+
+SYNC REMOTE SKILLS
+
+Syncing getsentry/skills...
+getsentry/skills: Failed to fetch: Network error
+
+Synced with 1 error.
+```
+
+## Remote Caching
+
+Remote skills are cached in `.warden/skills/`:
+
+```
+.warden/
+├── skills/
+│   ├── getsentry-skills-abc1234/    # Cached at commit abc1234
+│   │   ├── security-review/
+│   │   └── bug-detection/
+│   └── acme-custom-skills-def5678/  # Cached at commit def5678
+│       └── performance-review/
+└── state.json  # Cache metadata with SHAs
+```
+
+The `state.json` tracks the commit SHA for each cached remote:
+
+```json
+{
+  "skills": {
+    "getsentry/skills": {
+      "sha": "abc1234def5678",
+      "updatedAt": "2026-03-05T14:30:22.000Z"
+    }
+  }
+}
+```
+
+## When to Sync
+
+### Manual Sync
+
+Run `sync` when you want the latest skill updates:
+
+```bash
+# Before important analysis
+warden sync
+warden
+```
+
+### Automated Sync
+
+Add to CI/CD pipelines:
+
+```yaml
+# .github/workflows/warden.yml
+- name: Update Warden skills
+  run: warden sync
+  
+- name: Run Warden
+  run: warden
+```
+
+### Team Sync
+
+Sync after adding new team members or changing skill configurations:
+
+```bash
+# Share updated cache
+warden sync
+git add .warden/state.json
+git commit -m "Update cached skill versions"
+```
+
+## Comparison with Add
+
+The difference between `sync` and `add --force`:
+
+### warden sync
+
+- Updates **all** unpinned remotes at once
+- Only updates cache, doesn't modify `warden.toml`
+- Preserves pinned versions
+- Shows summary of updates
+
+### warden add --force
+
+- Updates **one** skill at a time
+- Re-adds skill to `warden.toml` (may duplicate)
+- Forces refresh even for pinned versions
+- Used when first adding a skill
+
+```bash
+# Update all remote skills
+warden sync
+
+# Force refresh specific skill
+warden add --remote owner/repo --skill name --force
+```
+
+## Pinning Skills
+
+To prevent automatic updates, pin skills to specific commits:
+
+### Pin Existing Skill
+
+Edit `warden.toml` to add `@sha`:
+
+```diff
+[[skills]]
+name = "security-review"
+- remote = "getsentry/skills"
++ remote = "getsentry/skills@abc123def456"
+```
+
+Get the current SHA from cache:
+
+```bash
+cat .warden/state.json | jq '.skills["getsentry/skills"].sha'
+```
+
+### Add Pinned Skill
+
+```bash
+warden add --remote getsentry/skills@abc123 --skill security-review
+```
+
+### Unpin Skill
+
+Remove the `@sha` suffix:
+
+```diff
+[[skills]]
+name = "security-review"
+- remote = "getsentry/skills@abc123def456"
++ remote = "getsentry/skills"
+```
+
+Then sync to get latest:
+
+```bash
+warden sync
+```
+
+## Offline Mode
+
+When working offline, Warden uses cached skills automatically:
+
+```bash
+# Use cached skills without syncing
+warden --offline
+```
+
+No need to run `sync` when using `--offline`.
+
+## Troubleshooting
+
+### Remote Not Found
+
+```bash
+$ warden sync unknown/repo
+
+Remote not found in cache: unknown/repo
+
+Cached remotes:
+  - getsentry/skills
+  - acme/custom-skills
+```
+
+**Solution:** Verify the remote name matches what's in your `warden.toml`.
+
+### Network Errors
+
+If sync fails due to network issues:
+
+```bash
+# Retry
+warden sync
+
+# Or use cached versions
+warden --offline
+```
+
+### Pinned Skills Not Updating
+
+If a pinned skill isn't updating:
+
+```bash
+# Check if it's pinned
+grep -A2 'name = "skill-name"' warden.toml
+
+# If pinned, remove @sha and sync
+warden sync
+```
+
+### Cache Corruption
+
+If the cache is corrupted:
+
+```bash
+# Remove cache and re-add skills
+rm -rf .warden/skills/ .warden/state.json
+warden add --remote owner/repo --skill name --force
+```
+
+## Related Commands
+
+- [warden add](/api/cli/add) - Add remote skills
+- [warden](/api/cli/warden) - Run analysis with cached skills

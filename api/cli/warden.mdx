@@ -1,0 +1,400 @@
+---
+title: 'warden'
+description: 'Main command for running code analysis with AI-powered skills'
+---
+
+# warden
+
+The main Warden command runs code analysis on your repository using AI-powered skills. It can analyze specific files, git changes, or use triggers configured in `warden.toml`.
+
+## Usage
+
+```bash
+warden [targets...] [options]
+```
+
+## Targets
+
+Warden accepts multiple target types to specify what code to analyze:
+
+<ParamField path="files" type="string">
+  Specific file paths to analyze
+  
+  ```bash
+  warden src/auth.ts
+  warden src/auth.ts src/utils.ts
+  ```
+</ParamField>
+
+<ParamField path="globs" type="string">
+  Glob patterns to match multiple files (must be quoted)
+  
+  ```bash
+  warden "src/**/*.ts"
+  warden "src/**/*.{ts,tsx}"
+  ```
+</ParamField>
+
+<ParamField path="git-ref" type="string">
+  Git references to analyze changes since a commit or between refs
+  
+  ```bash
+  warden HEAD~3           # Changes in last 3 commits
+  warden main..feature    # Changes between branches
+  warden HEAD~1..HEAD     # Most recent commit
+  ```
+</ParamField>
+
+<ParamField path="(none)" type="-">
+  When no targets are provided, Warden uses triggers from `warden.toml` to analyze uncommitted changes
+  
+  ```bash
+  warden  # Analyze uncommitted changes
+  ```
+</ParamField>
+
+<Note>
+For ambiguous targets (no path separator, no extension), Warden checks if a file exists at that path before treating it as a git ref. Use `--git` to force git ref interpretation.
+</Note>
+
+## Options
+
+### Skill Selection
+
+<ParamField path="--skill" type="string">
+  Run only the specified skill instead of all configured skills
+  
+  ```bash
+  warden --skill security-review
+  warden src/auth.ts --skill bug-detection
+  ```
+</ParamField>
+
+### Configuration
+
+<ParamField path="--config" type="string" default="./warden.toml">
+  Path to the Warden configuration file
+  
+  ```bash
+  warden --config .warden/custom.toml
+  ```
+</ParamField>
+
+<ParamField path="-m, --model" type="string">
+  Model to use for analysis (fallback when not set in config)
+  
+  ```bash
+  warden --model claude-sonnet-4.5
+  warden -m claude-opus-4
+  ```
+</ParamField>
+
+### Output Control
+
+<ParamField path="--json" type="boolean" default="false">
+  Output results in JSON format instead of human-readable format
+  
+  ```bash
+  warden --json
+  warden --json > results.json
+  ```
+</ParamField>
+
+<ParamField path="-o, --output" type="string">
+  Write full run output to a JSONL file for later replay
+  
+  ```bash
+  warden -o run.jsonl
+  warden --output .warden/logs/$(date +%s).jsonl
+  ```
+</ParamField>
+
+### Filtering
+
+<ParamField path="--fail-on" type="string">
+  Exit with code 1 if findings are at or above the specified severity level
+  
+  **Values:** `off`, `critical`, `high`, `medium`, `low`, `info`
+  
+  ```bash
+  warden --fail-on high      # Fail on high or critical
+  warden --fail-on medium    # Fail on medium, high, or critical
+  ```
+</ParamField>
+
+<ParamField path="--report-on" type="string">
+  Only show findings at or above the specified severity in output
+  
+  **Values:** `off`, `critical`, `high`, `medium`, `low`, `info`
+  
+  ```bash
+  warden --report-on high    # Only show high and critical
+  ```
+</ParamField>
+
+<ParamField path="--min-confidence" type="string" default="medium">
+  Only show findings at or above the specified confidence level
+  
+  **Values:** `off`, `high`, `medium`, `low`
+  
+  ```bash
+  warden --min-confidence high  # Only high confidence findings
+  ```
+</ParamField>
+
+### Execution Control
+
+<ParamField path="--fix" type="boolean" default="false">
+  Automatically apply all suggested fixes without prompting
+  
+  ```bash
+  warden --fix
+  ```
+</ParamField>
+
+<ParamField path="--parallel" type="number" default="4">
+  Maximum number of concurrent trigger/skill executions
+  
+  ```bash
+  warden --parallel 8
+  warden --parallel 1  # Sequential execution
+  ```
+</ParamField>
+
+<ParamField path="-x, --fail-fast" type="boolean" default="false">
+  Stop execution after the first finding is detected
+  
+  ```bash
+  warden --fail-fast
+  warden -x
+  ```
+</ParamField>
+
+### Git Integration
+
+<ParamField path="--staged" type="boolean" default="false">
+  Analyze only staged changes (git diff --cached)
+  
+  ```bash
+  warden --staged
+  ```
+</ParamField>
+
+<ParamField path="--git" type="boolean" default="false">
+  Force ambiguous targets to be interpreted as git refs instead of files
+  
+  ```bash
+  warden --git main  # Treat 'main' as branch, not file
+  ```
+</ParamField>
+
+<ParamField path="--offline" type="boolean" default="false">
+  Use cached remote skills without attempting network access
+  
+  ```bash
+  warden --offline
+  ```
+</ParamField>
+
+### Verbosity
+
+<ParamField path="--quiet" type="boolean" default="false">
+  Show errors and final summary only
+  
+  ```bash
+  warden --quiet
+  ```
+</ParamField>
+
+<ParamField path="-v, --verbose" type="flag">
+  Show real-time findings and analysis details. Use `-vv` for debug information including token counts and latencies
+  
+  ```bash
+  warden -v      # Verbose output
+  warden -vv     # Debug output
+  ```
+</ParamField>
+
+<ParamField path="--debug" type="boolean" default="false">
+  Enable debug output (equivalent to `-vv`)
+  
+  ```bash
+  warden --debug
+  ```
+</ParamField>
+
+<ParamField path="--log" type="boolean" default="false">
+  Use log output mode (no animations, timestamped lines)
+  
+  ```bash
+  warden --log
+  ```
+</ParamField>
+
+<ParamField path="--color / --no-color" type="boolean">
+  Force color output on or off (overrides auto-detection)
+  
+  ```bash
+  warden --color     # Force color
+  warden --no-color  # Disable color
+  ```
+</ParamField>
+
+### Help
+
+<ParamField path="--help, -h" type="boolean">
+  Show help message with all commands and options
+  
+  ```bash
+  warden --help
+  warden -h
+  ```
+</ParamField>
+
+<ParamField path="--version, -V" type="boolean">
+  Show version number
+  
+  ```bash
+  warden --version
+  warden -V
+  ```
+</ParamField>
+
+## Exit Codes
+
+<ResponseField name="0" type="Success">
+  Analysis completed successfully with no failures
+</ResponseField>
+
+<ResponseField name="1" type="Error">
+  - Configuration error
+  - Invalid arguments
+  - Skill execution error
+  - Findings met `--fail-on` threshold
+</ResponseField>
+
+<ResponseField name="130" type="Interrupted">
+  User interrupted execution with Ctrl+C
+</ResponseField>
+
+## Examples
+
+### Analyze Specific Files
+
+```bash
+# Single file
+warden src/auth.ts
+
+# Multiple files
+warden src/auth.ts src/api/endpoints.ts
+
+# With specific skill
+warden src/auth.ts --skill security-review
+```
+
+### Analyze with Glob Patterns
+
+```bash
+# All TypeScript files in src/
+warden "src/**/*.ts"
+
+# TypeScript and TSX files
+warden "src/**/*.{ts,tsx}"
+
+# Exclude tests
+warden "src/**/*.ts" "!**/*.test.ts"
+```
+
+### Analyze Git Changes
+
+```bash
+# Changes in last 3 commits
+warden HEAD~3
+
+# Changes between branches
+warden main..feature
+
+# Only staged changes
+warden --staged
+
+# Uncommitted changes
+warden
+```
+
+### Control Output
+
+```bash
+# JSON output
+warden --json
+
+# Save to JSONL file
+warden -o results.jsonl
+
+# Quiet mode (summary only)
+warden --quiet
+
+# Verbose with debug info
+warden -vv
+```
+
+### Fail on Severity
+
+```bash
+# Fail CI if high or critical findings
+warden --fail-on high
+
+# Show only critical findings
+warden --report-on critical
+
+# High confidence findings only
+warden --min-confidence high
+```
+
+### Automatic Fixes
+
+```bash
+# Apply all fixes automatically
+warden --fix
+
+# Interactive fix mode (default when fixes available)
+warden
+```
+
+### Remote Skills
+
+```bash
+# Use cached skills only (no network)
+warden --offline
+
+# Specify model
+warden --model claude-sonnet-4.5
+```
+
+## Environment Variables
+
+<ParamField path="WARDEN_ANTHROPIC_API_KEY" type="string" required>
+  Anthropic API key for Claude model access. Can be set in `.env.local`
+</ParamField>
+
+<ParamField path="WARDEN_MODEL" type="string">
+  Default model to use when not specified in config or CLI
+</ParamField>
+
+<ParamField path="WARDEN_SENTRY_DSN" type="string">
+  Sentry DSN for error tracking (optional)
+</ParamField>
+
+## Notes
+
+- Warden loads environment variables from `.env` and `.env.local` in the repository root
+- When no targets are specified, Warden uses triggers defined in `warden.toml`
+- Skills are discovered from `.agents/skills/` and `.claude/skills/` directories
+- Logs are automatically saved to `.warden/logs/` when a run completes
+- Use `warden logs` to view saved runs
+
+## Related Commands
+
+- [warden init](/api/cli/init) - Initialize Warden configuration
+- [warden add](/api/cli/add) - Add skills to configuration
+- [warden logs](/api/cli/logs) - View saved run logs
+- [warden sync](/api/cli/sync) - Update remote skills

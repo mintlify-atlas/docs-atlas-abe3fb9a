@@ -1,0 +1,452 @@
+---
+title: 'Configuration'
+description: 'warden.toml configuration schema types'
+icon: 'gear'
+---
+
+## WardenConfig
+
+Root configuration schema for `warden.toml`.
+
+<ResponseField name="version" type="1" required>
+  Configuration schema version. Must be `1`.
+</ResponseField>
+
+<ResponseField name="defaults" type="Defaults" default="undefined">
+  Default settings inherited by all skills unless overridden
+</ResponseField>
+
+<ResponseField name="skills" type="SkillConfig[]" default="[]">
+  Array of skill configurations defining which analyses to run
+</ResponseField>
+
+<ResponseField name="runner" type="RunnerConfig" default="undefined">
+  Global execution settings for concurrent analysis
+</ResponseField>
+
+<ResponseField name="logs" type="LogsConfig" default="undefined">
+  Log retention and cleanup configuration
+</ResponseField>
+
+---
+
+## SkillConfig
+
+Configuration for a single skill.
+
+<ResponseField name="name" type="string" required>
+  Skill name (must be unique across all skills). Corresponds to a directory in `.warden/skills/` or a remote repository.
+</ResponseField>
+
+<ResponseField name="paths" type="string[]" default="undefined">
+  Glob patterns to include (e.g., `["src/**/*.ts", "lib/**/*.js"]`). If omitted, analyzes all changed files.
+</ResponseField>
+
+<ResponseField name="ignorePaths" type="string[]" default="undefined">
+  Glob patterns to exclude (e.g., `["**/*.test.ts", "dist/**"]`). Overrides `paths` and `defaults.ignorePaths`.
+</ResponseField>
+
+<ResponseField name="remote" type="string" default="undefined">
+  Remote repository reference:
+  - `"owner/repo"` - Latest version from default branch
+  - `"owner/repo@sha"` - Specific commit SHA
+  - `"owner/repo@v1.2.3"` - Git tag
+</ResponseField>
+
+<ResponseField name="failOn" type="SeverityThreshold" default="undefined">
+  Fail analysis when findings meet this severity: `"high"`, `"medium"`, `"low"`, or `"off"` to disable.
+</ResponseField>
+
+<ResponseField name="reportOn" type="SeverityThreshold" default="undefined">
+  Only report findings at or above this severity. Filters output but doesn't affect exit code.
+</ResponseField>
+
+<ResponseField name="maxFindings" type="number" default="undefined">
+  Maximum number of findings to report (must be positive). Truncates output when exceeded.
+</ResponseField>
+
+<ResponseField name="reportOnSuccess" type="boolean" default="undefined">
+  Whether to post a comment when no findings are detected. Useful for PR checks.
+</ResponseField>
+
+<ResponseField name="requestChanges" type="boolean" default="false">
+  Use GitHub's REQUEST_CHANGES review event when findings exceed `failOn` severity. Blocks PR merges.
+</ResponseField>
+
+<ResponseField name="failCheck" type="boolean" default="false">
+  Fail the GitHub check run when findings exceed `failOn` severity. Shows red X in PR checks.
+</ResponseField>
+
+<ResponseField name="model" type="string" default="undefined">
+  Claude model to use (e.g., `"claude-sonnet-4-20250514"`, `"claude-opus-4-20250514"`). Uses SDK default if omitted.
+</ResponseField>
+
+<ResponseField name="maxTurns" type="number" default="50">
+  Maximum agentic turns (API round-trips) per hunk analysis. Higher values allow more tool use but increase cost.
+</ResponseField>
+
+<ResponseField name="minConfidence" type="ConfidenceThreshold" default="undefined">
+  Minimum confidence level: `"high"`, `"medium"`, `"low"`, or `"off"`. Filters out low-confidence findings.
+</ResponseField>
+
+<ResponseField name="triggers" type="SkillTrigger[]" default="undefined">
+  Defines when and where this skill runs. If omitted, runs on all pull requests with default actions.
+</ResponseField>
+
+---
+
+## SkillTrigger
+
+Defines when a skill should run.
+
+<ResponseField name="type" type="TriggerType" required>
+  Where the trigger runs:
+  - `"pull_request"` - GitHub PR events (requires `actions`)
+  - `"local"` - Local CLI runs only
+  - `"schedule"` - GitHub Actions cron schedule (requires `paths` in skill config)
+</ResponseField>
+
+<ResponseField name="actions" type="string[]" default="undefined">
+  **Required for `pull_request` triggers.** Array of PR actions to trigger on:
+  - `["opened", "synchronize", "reopened"]` - Typical configuration
+  - `["opened"]` - Only when PR is first created
+  - `["closed"]` - Only when PR is merged or closed
+</ResponseField>
+
+<Expandable title="Per-trigger Overrides">
+  All skill-level settings can be overridden for specific triggers:
+  
+  <ResponseField name="failOn" type="SeverityThreshold" default="undefined">
+    Override failure threshold for this trigger
+  </ResponseField>
+  
+  <ResponseField name="reportOn" type="SeverityThreshold" default="undefined">
+    Override reporting threshold for this trigger
+  </ResponseField>
+  
+  <ResponseField name="maxFindings" type="number" default="undefined">
+    Override max findings limit for this trigger
+  </ResponseField>
+  
+  <ResponseField name="reportOnSuccess" type="boolean" default="undefined">
+    Override success reporting behavior
+  </ResponseField>
+  
+  <ResponseField name="requestChanges" type="boolean" default="undefined">
+    Override REQUEST_CHANGES behavior
+  </ResponseField>
+  
+  <ResponseField name="failCheck" type="boolean" default="undefined">
+    Override check failure behavior
+  </ResponseField>
+  
+  <ResponseField name="model" type="string" default="undefined">
+    Override Claude model for this trigger
+  </ResponseField>
+  
+  <ResponseField name="maxTurns" type="number" default="undefined">
+    Override max turns for this trigger
+  </ResponseField>
+  
+  <ResponseField name="minConfidence" type="ConfidenceThreshold" default="undefined">
+    Override confidence filtering for this trigger
+  </ResponseField>
+</Expandable>
+
+<ResponseField name="schedule" type="ScheduleConfig" default="undefined">
+  Schedule-specific configuration (only used when `type` is `"schedule"`)
+</ResponseField>
+
+---
+
+## Defaults
+
+Global defaults inherited by all skills.
+
+<ResponseField name="failOn" type="SeverityThreshold" default="undefined">
+  Default failure threshold: `"high"`, `"medium"`, `"low"`, or `"off"`
+</ResponseField>
+
+<ResponseField name="reportOn" type="SeverityThreshold" default="undefined">
+  Default reporting threshold
+</ResponseField>
+
+<ResponseField name="maxFindings" type="number" default="undefined">
+  Default max findings limit
+</ResponseField>
+
+<ResponseField name="reportOnSuccess" type="boolean" default="false">
+  Whether to report when no findings are detected
+</ResponseField>
+
+<ResponseField name="requestChanges" type="boolean" default="false">
+  Use REQUEST_CHANGES review event by default
+</ResponseField>
+
+<ResponseField name="failCheck" type="boolean" default="false">
+  Fail check runs by default
+</ResponseField>
+
+<ResponseField name="model" type="string" default="undefined">
+  Default Claude model for all skills
+</ResponseField>
+
+<ResponseField name="maxTurns" type="number" default="50">
+  Default maximum agentic turns per hunk
+</ResponseField>
+
+<ResponseField name="minConfidence" type="ConfidenceThreshold" default="'medium'">
+  Default minimum confidence level
+</ResponseField>
+
+<ResponseField name="ignorePaths" type="string[]" default="undefined">
+  Global patterns to exclude from all skills (e.g., `["**/node_modules/**", "dist/**"]`)
+</ResponseField>
+
+<ResponseField name="defaultBranch" type="string" default="undefined">
+  Repository default branch (e.g., `"main"`, `"master"`). Auto-detected if omitted.
+</ResponseField>
+
+<ResponseField name="chunking" type="ChunkingConfig" default="undefined">
+  Configuration for how files are split and analyzed
+</ResponseField>
+
+<ResponseField name="batchDelayMs" type="number" default="0">
+  Delay in milliseconds between starting concurrent file analyses. Helps avoid rate limiting.
+</ResponseField>
+
+<ResponseField name="auxiliaryMaxRetries" type="number" default="5">
+  Max retries for auxiliary Haiku calls (extraction repair, merging, deduplication, fix evaluation)
+</ResponseField>
+
+---
+
+## ChunkingConfig
+
+Controls how files are processed during analysis.
+
+<ResponseField name="filePatterns" type="FilePattern[]" default="undefined">
+  Patterns to control file processing mode
+</ResponseField>
+
+<ResponseField name="coalesce" type="CoalesceConfig" default="undefined">
+  Options for merging nearby diff hunks
+</ResponseField>
+
+<ResponseField name="maxContextFiles" type="number" default="50">
+  Maximum number of "other changed files" to list in hunk prompts for PR context. Set to `0` to disable.
+</ResponseField>
+
+### FilePattern
+
+Defines how specific files should be processed:
+
+<ResponseField name="pattern" type="string" required>
+  Glob pattern to match files (e.g., `"**/pnpm-lock.yaml"`, `"**/*.svg"`)
+</ResponseField>
+
+<ResponseField name="mode" type="'per-hunk' | 'whole-file' | 'skip'" default="'skip'">
+  Processing mode:
+  - `"per-hunk"` - Analyze each diff hunk separately (default for most files)
+  - `"whole-file"` - Analyze entire file content at once
+  - `"skip"` - Skip analysis entirely
+</ResponseField>
+
+### CoalesceConfig
+
+Controls merging of nearby diff hunks:
+
+<ResponseField name="enabled" type="boolean" default="true">
+  Whether to enable hunk coalescing
+</ResponseField>
+
+<ResponseField name="maxGapLines" type="number" default="30">
+  Maximum line gap between hunks to merge them together
+</ResponseField>
+
+<ResponseField name="maxChunkSize" type="number" default="8000">
+  Target maximum size per chunk in characters. Prevents merged chunks from exceeding context limits.
+</ResponseField>
+
+---
+
+## ScheduleConfig
+
+Configuration for scheduled skill runs.
+
+<ResponseField name="issueTitle" type="string" default="'Warden: {skillName}'">
+  Title for the tracking issue. Use `{skillName}` placeholder.
+</ResponseField>
+
+<ResponseField name="createFixPR" type="boolean" default="false">
+  Automatically create PRs with fixes when `suggestedFix` is available
+</ResponseField>
+
+<ResponseField name="fixBranchPrefix" type="string" default="'warden-fix'">
+  Branch name prefix for fix PRs (e.g., `"warden-fix-security-audit"`)
+</ResponseField>
+
+---
+
+## RunnerConfig
+
+Global execution settings.
+
+<ResponseField name="concurrency" type="number" default="4">
+  Maximum concurrent file analyses across all skills (must be positive)
+</ResponseField>
+
+---
+
+## LogsConfig
+
+Log file management settings.
+
+<ResponseField name="cleanup" type="LogCleanupMode" default="'ask'">
+  How to handle expired log files:
+  - `"ask"` - Prompt user in TTY (default)
+  - `"auto"` - Silently delete expired logs
+  - `"never"` - Keep all logs indefinitely
+</ResponseField>
+
+<ResponseField name="retentionDays" type="number" default="30">
+  Number of days to retain log files before considering them expired (must be positive)
+</ResponseField>
+
+---
+
+## Type Aliases
+
+### SeverityThreshold
+
+```typescript
+type SeverityThreshold = 'off' | 'high' | 'medium' | 'low';
+```
+
+Used for `failOn` and `reportOn`. Setting to `"off"` disables the threshold.
+
+### ConfidenceThreshold
+
+```typescript
+type ConfidenceThreshold = 'off' | 'high' | 'medium' | 'low';
+```
+
+Used for `minConfidence`. Setting to `"off"` disables filtering.
+
+### TriggerType
+
+```typescript
+type TriggerType = 'pull_request' | 'local' | 'schedule';
+```
+
+### LogCleanupMode
+
+```typescript
+type LogCleanupMode = 'ask' | 'auto' | 'never';
+```
+
+---
+
+## Example: Complete Configuration
+
+```toml
+version = 1
+
+[defaults]
+failOn = "high"
+reportOn = "medium"
+minConfidence = "medium"
+model = "claude-sonnet-4-20250514"
+maxTurns = 50
+ignorePaths = ["**/node_modules/**", "dist/**", "**/*.test.ts"]
+
+[defaults.chunking]
+maxContextFiles = 50
+
+[defaults.chunking.coalesce]
+enabled = true
+maxGapLines = 30
+maxChunkSize = 8000
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/pnpm-lock.yaml"
+mode = "skip"
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/*.md"
+mode = "whole-file"
+
+[runner]
+concurrency = 4
+
+[logs]
+cleanup = "auto"
+retentionDays = 30
+
+# Security audit skill
+[[skills]]
+name = "security-audit"
+paths = ["src/**/*.ts", "lib/**/*.js"]
+failOn = "high"
+reportOnSuccess = true
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+requestChanges = true
+failCheck = true
+
+# Performance check for local development
+[[skills]]
+name = "performance-check"
+remote = "sentry/warden-skills@v1.2.3"
+paths = ["src/**/*.ts"]
+reportOn = "low"
+
+[[skills.triggers]]
+type = "local"
+
+# Weekly security sweep
+[[skills]]
+name = "weekly-security-sweep"
+remote = "sentry/security-skills"
+paths = ["**/*.ts", "**/*.js"]
+failOn = "off"
+
+[[skills.triggers]]
+type = "schedule"
+
+[skills.triggers.schedule]
+issueTitle = "Weekly Security Audit: {skillName}"
+createFixPR = true
+fixBranchPrefix = "security-fix"
+```
+
+---
+
+## Validation
+
+Warden validates `warden.toml` on load:
+
+```typescript
+import { WardenConfigSchema, loadConfig } from '@sentry/warden';
+
+// Load and validate from file
+const config = await loadConfig('/path/to/warden.toml');
+
+// Parse raw TOML
+const parsed = WardenConfigSchema.parse(rawToml);
+
+// Safe parse with error handling
+const result = WardenConfigSchema.safeParse(rawToml);
+if (!result.success) {
+  console.error('Invalid config:', result.error);
+}
+```
+
+<Note>
+  Warden performs additional validation beyond type checking:
+  - Skill names must be unique
+  - Schedule triggers require `paths` to be defined
+  - Pull request triggers require `actions` to be specified
+</Note>

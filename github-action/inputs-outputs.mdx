@@ -1,0 +1,455 @@
+---
+title: Inputs & Outputs
+description: Complete reference for GitHub Action inputs and outputs
+---
+
+Reference documentation for all Warden GitHub Action inputs and outputs.
+
+## Inputs
+
+All inputs are configured in your workflow file under `with:`:
+
+```yaml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    fail-on: high
+```
+
+### anthropic-api-key
+
+<ParamField path="anthropic-api-key" type="string" required={false}>
+  Anthropic API key (`sk-ant-...`) or OAuth token (`sk-ant-oat-...`).
+  
+  Can also be set via environment variables:
+  - `WARDEN_ANTHROPIC_API_KEY`
+  - `ANTHROPIC_API_KEY`
+  - `CLAUDE_CODE_OAUTH_TOKEN` (for OAuth)
+  
+  **Required:** One authentication method must be provided.
+</ParamField>
+
+```yaml
+# Via input
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+# Via environment variable
+- uses: getsentry/warden@v1
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+### github-token
+
+<ParamField path="github-token" type="string" default="${{ github.token }}">
+  GitHub token for API access. Defaults to the automatic `GITHUB_TOKEN`.
+  
+  Use a GitHub App token for better review thread management:
+  
+  ```yaml
+  - uses: actions/create-github-app-token@v1
+    id: app-token
+    with:
+      app-id: ${{ secrets.WARDEN_APP_ID }}
+      private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+  
+  - uses: getsentry/warden@v1
+    with:
+      github-token: ${{ steps.app-token.outputs.token }}
+  ```
+</ParamField>
+
+### config-path
+
+<ParamField path="config-path" type="string" default="warden.toml">
+  Path to `warden.toml` configuration file, relative to repository root.
+  
+  ```yaml
+  - uses: getsentry/warden@v1
+    with:
+      config-path: .github/warden.toml
+  ```
+</ParamField>
+
+### fail-on
+
+<ParamField path="fail-on" type="string" default="high">
+  Minimum severity level to fail the action.
+  
+  **Options:** `off`, `critical`, `high`, `medium`, `low`, `info`
+  
+  When findings at or above this severity are found:
+  - Action fails if `fail-check` is true
+  - Review is `REQUEST_CHANGES` if `request-changes` is true
+  
+  Use `off` to never fail (informational mode).
+  
+  ```yaml
+  - uses: getsentry/warden@v1
+    with:
+      fail-on: critical  # Only fail on critical issues
+  ```
+</ParamField>
+
+### report-on
+
+<ParamField path="report-on" type="string" default="medium">
+  Minimum severity level to show annotations in code review.
+  
+  **Options:** `off`, `critical`, `high`, `medium`, `low`, `info`
+  
+  Findings below this threshold are counted but not posted as comments.
+  Use `off` to disable all review comments.
+  
+  ```yaml
+  - uses: getsentry/warden@v1
+    with:
+      report-on: low  # Show all findings in review
+  ```
+</ParamField>
+
+### max-findings
+
+<ParamField path="max-findings" type="number" default="50">
+  Maximum number of findings to report. Use `0` for unlimited.
+  
+  Higher severity findings are prioritized when limit is reached.
+  
+  ```yaml
+  - uses: getsentry/warden@v1
+    with:
+      max-findings: 100  # Allow up to 100 findings
+  ```
+</ParamField>
+
+### request-changes
+
+<ParamField path="request-changes" type="boolean" default="false">
+  Whether to use `REQUEST_CHANGES` review event when findings exceed `fail-on` threshold.
+  
+  When `true`:
+  - Creates a blocking review that requires dismissal
+  - Automatically dismissed when all issues are resolved
+  - Requires GitHub token with reviewer permissions
+  
+  ```yaml
+  - uses: getsentry/warden@v1
+    with:
+      fail-on: high
+      request-changes: true  # Block PR merge
+  ```
+</ParamField>
+
+### fail-check
+
+<ParamField path="fail-check" type="boolean" default="false">
+  Whether to fail the check run when findings exceed `fail-on` threshold.
+  
+  When `true`:
+  - Check run status is "failure"
+  - Blocks PR merge if check is required
+  
+  When `false`:
+  - Check run always passes
+  - Findings shown for information only
+  
+  ```yaml
+  - uses: getsentry/warden@v1
+    with:
+      fail-check: true  # Fail check on high+ severity
+  ```
+</ParamField>
+
+### parallel
+
+<ParamField path="parallel" type="number" default="5">
+  Maximum number of concurrent trigger executions.
+  
+  Higher values:
+  - Faster analysis for large changes
+  - Higher API usage and memory
+  
+  Lower values:
+  - Slower but more conservative
+  - Better for rate limit management
+  
+  ```yaml
+  - uses: getsentry/warden@v1
+    with:
+      parallel: 10  # Analyze 10 files concurrently
+  ```
+</ParamField>
+
+## Outputs
+
+Access outputs in subsequent workflow steps:
+
+```yaml
+- uses: getsentry/warden@v1
+  id: warden
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+- name: Check results
+  run: |
+    echo "Found ${{ steps.warden.outputs.findings-count }} issues"
+    echo "High severity: ${{ steps.warden.outputs.high-count }}"
+```
+
+### findings-count
+
+<ResponseField name="findings-count" type="number">
+  Total number of findings across all triggers and severity levels.
+  
+  Includes all findings regardless of `report-on` threshold.
+</ResponseField>
+
+```yaml
+- name: Post results to Slack
+  if: steps.warden.outputs.findings-count > 0
+  run: |
+    curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+      -d '{"text": "Warden found ${{ steps.warden.outputs.findings-count }} issues"}'
+```
+
+### high-count
+
+<ResponseField name="high-count" type="number">
+  Number of high severity findings.
+  
+  Useful for tracking critical issues separately.
+</ResponseField>
+
+```yaml
+- name: Fail on critical issues
+  if: steps.warden.outputs.high-count > 5
+  run: exit 1
+```
+
+### summary
+
+<ResponseField name="summary" type="string">
+  Human-readable summary of the analysis.
+  
+  Example: `"Found 3 issues: 1 high, 2 medium"`
+</ResponseField>
+
+```yaml
+- name: Comment summary
+  uses: actions/github-script@v7
+  with:
+    script: |
+      github.rest.issues.createComment({
+        issue_number: context.issue.number,
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        body: 'Warden: ${{ steps.warden.outputs.summary }}'
+      })
+```
+
+### findings-file
+
+<ResponseField name="findings-file" type="string">
+  Path to structured JSON findings file.
+  
+  Always written, even when no findings are found. Use for:
+  - Uploading to cloud storage (GCS, S3)
+  - Custom processing pipelines
+  - Archiving results
+  
+  **Format:** See [Findings Schema](#findings-schema)
+</ResponseField>
+
+```yaml
+- name: Upload findings
+  uses: actions/upload-artifact@v4
+  with:
+    name: warden-findings
+    path: ${{ steps.warden.outputs.findings-file }}
+
+- name: Upload to GCS
+  run: |
+    gsutil cp ${{ steps.warden.outputs.findings-file }} \
+      gs://my-bucket/warden/${{ github.sha }}.json
+```
+
+## Findings Schema
+
+The JSON file referenced by `findings-file` has this structure:
+
+```json
+{
+  "event": {
+    "type": "pull_request",
+    "action": "opened",
+    "repository": {
+      "owner": "getsentry",
+      "name": "warden",
+      "fullName": "getsentry/warden"
+    },
+    "pullRequest": {
+      "number": 123,
+      "baseBranch": "main",
+      "headBranch": "feature/fix",
+      "baseSha": "abc123",
+      "headSha": "def456"
+    }
+  },
+  "reports": [
+    {
+      "skill": "security-audit",
+      "findings": [
+        {
+          "id": "sec-001",
+          "severity": "high",
+          "confidence": "high",
+          "title": "SQL Injection Risk",
+          "message": "User input is directly interpolated into SQL query",
+          "path": "src/db/users.ts",
+          "line": 42,
+          "suggestion": "Use parameterized queries instead"
+        }
+      ],
+      "duration": 1234,
+      "usage": {
+        "inputTokens": 5000,
+        "outputTokens": 1000,
+        "costUSD": 0.05
+      }
+    }
+  ],
+  "summary": {
+    "totalFindings": 5,
+    "bySeverity": {
+      "critical": 0,
+      "high": 1,
+      "medium": 3,
+      "low": 1,
+      "info": 0
+    },
+    "totalCostUSD": 0.15,
+    "totalDurationMs": 3500
+  }
+}
+```
+
+## Usage Examples
+
+### Conditional Workflows
+
+Run different checks based on findings:
+
+```yaml
+jobs:
+  warden:
+    runs-on: ubuntu-latest
+    outputs:
+      has-findings: ${{ steps.warden.outputs.findings-count > 0 }}
+      high-count: ${{ steps.warden.outputs.high-count }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: getsentry/warden@v1
+        id: warden
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+  
+  notify:
+    needs: warden
+    if: needs.warden.outputs.has-findings == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify team
+        run: echo "Found issues, notifying team..."
+  
+  security-review:
+    needs: warden
+    if: needs.warden.outputs.high-count > 0
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request security review
+        run: echo "High severity issues found, requesting security review..."
+```
+
+### Upload Findings to Cloud Storage
+
+```yaml
+- uses: getsentry/warden@v1
+  id: warden
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+- name: Upload to S3
+  if: always()
+  env:
+    AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+    AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  run: |
+    aws s3 cp ${{ steps.warden.outputs.findings-file }} \
+      s3://my-warden-reports/${{ github.repository }}/${{ github.sha }}.json
+```
+
+### Custom Summary Comment
+
+```yaml
+- uses: getsentry/warden@v1
+  id: warden
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+- name: Post custom summary
+  if: always()
+  uses: actions/github-script@v7
+  with:
+    script: |
+      const summary = `## Warden Analysis
+      
+      ${{ steps.warden.outputs.summary }}
+      
+      - Total findings: ${{ steps.warden.outputs.findings-count }}
+      - High severity: ${{ steps.warden.outputs.high-count }}
+      
+      [View detailed findings](${{ steps.warden.outputs.findings-file }})`;
+      
+      github.rest.issues.createComment({
+        issue_number: context.issue.number,
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        body: summary
+      });
+```
+
+### Matrix Testing
+
+Run Warden with different configurations:
+
+```yaml
+jobs:
+  warden:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        config:
+          - { fail-on: 'critical', name: 'Critical Only' }
+          - { fail-on: 'high', name: 'High+' }
+          - { fail-on: 'medium', name: 'Medium+' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: getsentry/warden@v1
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          fail-on: ${{ matrix.config.fail-on }}
+          fail-check: false  # Don't block, just report
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Setup" icon="rocket" href="/github-action/setup">
+    Get started with GitHub Action setup
+  </Card>
+  <Card title="Configuration" icon="gear" href="/github-action/configuration">
+    Learn about advanced configuration options
+  </Card>
+</CardGroup>

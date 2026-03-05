@@ -1,0 +1,328 @@
+---
+title: Configuration
+description: Configure Warden GitHub Action behavior with inputs and thresholds
+---
+
+The Warden GitHub Action can be configured through workflow inputs to control severity thresholds, reporting behavior, and performance.
+
+## Basic Configuration
+
+```yaml .github/workflows/warden.yml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    fail-on: high
+    report-on: medium
+    max-findings: 50
+```
+
+## Severity Thresholds
+
+Control when to fail checks and what to report:
+
+### fail-on
+
+Minimum severity level to fail the action. When findings at or above this level are found, the check will fail.
+
+```yaml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    fail-on: high  # Options: off, critical, high, medium, low, info
+```
+
+**Options:**
+- `critical` - Fail only on critical findings
+- `high` - Fail on high or critical (default)
+- `medium` - Fail on medium, high, or critical
+- `low` - Fail on low, medium, high, or critical
+- `info` - Fail on any finding
+- `off` - Never fail (informational only)
+
+<Note>
+The `fail-on` threshold can be overridden per-skill in `warden.toml`.
+</Note>
+
+### report-on
+
+Minimum severity level to show as code review annotations:
+
+```yaml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    report-on: medium  # Default: medium
+```
+
+Findings below this threshold are still counted but not posted as review comments. Useful to reduce noise while still tracking all issues.
+
+## Review Behavior
+
+### request-changes
+
+Use `REQUEST_CHANGES` review event when findings exceed `fail-on` threshold:
+
+```yaml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    fail-on: high
+    request-changes: true  # Default: false
+```
+
+When enabled:
+- Creates a blocking review that must be dismissed
+- Automatically dismissed when all issues are resolved
+- Requires reviewer permissions for the GitHub token
+
+<Warning>
+Only enable this if your GitHub token has reviewer permissions. Using `GITHUB_TOKEN` may not have sufficient permissions.
+</Warning>
+
+### fail-check
+
+Fail the check run when findings exceed `fail-on` threshold:
+
+```yaml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    fail-on: high
+    fail-check: false  # Default: false
+```
+
+- `true` - Check run fails, blocking PR merge if required
+- `false` - Check run passes, findings shown for information only
+
+## Performance Tuning
+
+### parallel
+
+Maximum number of concurrent trigger executions:
+
+```yaml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    parallel: 5  # Default: 5
+```
+
+Higher values:
+- Faster analysis for large changes
+- Higher API rate limit usage
+- More memory consumption
+
+Lower values:
+- Slower but more conservative
+- Better for rate limit concerns
+
+<Note>
+This can also be configured in `warden.toml` under `[defaults.runner]` or `[[skills.runner]]`.
+</Note>
+
+### max-findings
+
+Maximum number of findings to report:
+
+```yaml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    max-findings: 50  # Default: 50, 0 = unlimited
+```
+
+Prevents overwhelming PRs with too many comments. Higher severity findings are prioritized.
+
+## Configuration File Path
+
+### config-path
+
+Path to `warden.toml` configuration file (relative to repository root):
+
+```yaml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    config-path: .github/warden.toml  # Default: warden.toml
+```
+
+Useful for:
+- Storing config in `.github/` directory
+- Multiple configurations for different workflows
+- Monorepo setups
+
+## Complete Example
+
+Here's a production-ready configuration:
+
+```yaml .github/workflows/warden.yml
+name: Warden
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: write
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+      
+      - uses: getsentry/warden@v1
+        with:
+          # Authentication
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github-token: ${{ steps.app-token.outputs.token }}
+          
+          # Configuration
+          config-path: warden.toml
+          
+          # Severity thresholds
+          fail-on: high          # Fail on high+ severity
+          report-on: medium      # Show medium+ in reviews
+          
+          # Review behavior
+          request-changes: true  # Block PR on failures
+          fail-check: true       # Fail check run
+          
+          # Performance
+          parallel: 5            # Concurrent executions
+          max-findings: 50       # Limit findings per run
+```
+
+## Per-Skill Configuration
+
+Many inputs can be overridden per-skill in `warden.toml`:
+
+```toml warden.toml
+version = 1
+
+[defaults]
+failOn = "high"
+reportOn = "medium"
+
+[[skills]]
+name = "security-audit"
+paths = ["src/**/*.ts"]
+# Override for this skill only
+failOn = "critical"      # Only fail on critical security issues
+reportOn = "low"         # Show all security findings
+requestChanges = true    # Block PR for security issues
+failCheck = true
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+
+[[skills]]
+name = "code-quality"
+paths = ["src/**/*.ts"]
+# Informational only - don't block PRs
+failOn = "off"
+reportOn = "medium"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+```
+
+## Environment Variables
+
+Alternative to workflow inputs:
+
+```yaml
+- uses: getsentry/warden@v1
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    WARDEN_MODEL: claude-sonnet-4-20250514  # Override model
+    WARDEN_SENTRY_DSN: ${{ secrets.WARDEN_SENTRY_DSN }}  # Optional telemetry
+```
+
+## Conditional Execution
+
+Run Warden only on specific conditions:
+
+```yaml
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    # Skip for dependabot PRs
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: getsentry/warden@v1
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+Or only on specific paths:
+
+```yaml
+on:
+  pull_request:
+    paths:
+      - 'src/**/*.ts'
+      - 'lib/**/*.js'
+```
+
+## Troubleshooting
+
+### Authentication Errors
+
+```
+Error: Authentication not found
+```
+
+Ensure you've set the API key:
+1. Check secret name matches workflow: `ANTHROPIC_API_KEY`
+2. Verify secret is set in repository settings
+3. Check for typos in the workflow file
+
+### Permission Errors
+
+```
+Error: Resource not accessible by integration
+```
+
+Add required permissions to workflow:
+
+```yaml
+permissions:
+  contents: write        # Required
+  pull-requests: write   # Auto via GITHUB_TOKEN
+  checks: write          # Auto via GITHUB_TOKEN
+```
+
+### Rate Limiting
+
+Reduce `parallel` value and enable `max-findings`:
+
+```yaml
+- uses: getsentry/warden@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    parallel: 3
+    max-findings: 30
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Inputs & Outputs" icon="code" href="/github-action/inputs-outputs">
+    Complete reference for all inputs and outputs
+  </Card>
+  <Card title="warden.toml" icon="file" href="/configuration/warden-toml">
+    Configure skills and triggers
+  </Card>
+</CardGroup>

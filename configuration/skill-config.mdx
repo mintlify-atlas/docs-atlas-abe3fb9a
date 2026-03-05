@@ -1,0 +1,472 @@
+---
+title: Skill Configuration
+description: Configure individual skills in warden.toml
+---
+
+Skills define what to analyze and how. Each skill in your `warden.toml` operates independently with its own settings for paths, severity thresholds, and triggers.
+
+## Basic Structure
+
+```toml
+[[skills]]
+name = "my-skill"
+paths = ["src/**/*.ts"]
+ignorepaths = ["**/*.test.ts"]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+## Required Fields
+
+<ParamField path="name" type="string" required>
+  Unique identifier for the skill. Must match a skill in `.agents/skills/` or a remote skill name.
+  
+  ```toml
+  [[skills]]
+  name = "security-scanner"  # Maps to .agents/skills/security-scanner/
+  ```
+</ParamField>
+
+<Note>
+  The `name` field references:
+  - Local skills in `.agents/skills/<name>/SKILL.md`
+  - Skills added via `warden add <name>`
+  - Remote skills when used with the `remote` field
+</Note>
+
+## Path Filtering
+
+<ParamField path="paths" type="array">
+  Glob patterns for files to include in analysis.
+  
+  ```toml
+  [[skills]]
+  name = "my-skill"
+  paths = [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "lib/**/*.js"
+  ]
+  ```
+</ParamField>
+
+<ParamField path="ignorePaths" type="array">
+  Glob patterns for files to exclude. Combines with `defaults.ignorePaths`.
+  
+  ```toml
+  [[skills]]
+  name = "my-skill"
+  ignorePaths = [
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "src/generated/**"
+  ]
+  ```
+</ParamField>
+
+<Warning>
+  `ignorePaths` at the skill level are **additive** with `defaults.ignorePaths`. To analyze a file excluded by defaults, you cannot override it at the skill level—remove it from defaults instead.
+</Warning>
+
+### Path Matching Examples
+
+```toml
+# Include specific directories
+paths = ["src/auth/**", "src/payments/**"]
+
+# Include by file extension
+paths = ["**/*.ts", "**/*.tsx"]
+
+# Exclude test files
+ignorepaths = ["**/*.test.ts", "**/__tests__/**"]
+
+# Exclude specific directories
+ignorepaths = ["src/legacy/**", "vendor/**"]
+```
+
+## Remote Skills
+
+<ParamField path="remote" type="string">
+  Fetch skill from a GitHub repository instead of using a local skill.
+  
+  **Format:** `owner/repo` or `owner/repo@sha`
+  
+  ```toml
+  [[skills]]
+  name = "code-simplifier"
+  remote = "getsentry/sentry-skills"
+  ```
+  
+  ```toml
+  [[skills]]
+  name = "code-simplifier"
+  remote = "getsentry/sentry-skills@a1b2c3d"  # Pinned to specific commit
+  ```
+</ParamField>
+
+<Note>
+  Remote skills are cached locally. Unpinned references (without `@sha`) are cached according to `WARDEN_SKILL_CACHE_TTL` (default: 86400 seconds / 24 hours). Pinned references are cached indefinitely.
+</Note>
+
+## Output Control
+
+These fields override `[defaults]` settings for this skill.
+
+<ParamField path="failOn" type="enum">
+  Exit with code 1 when findings meet this severity threshold.
+  
+  **Values:** `"off"`, `"high"`, `"medium"`, `"low"`
+  
+  ```toml
+  [[skills]]
+  name = "security-scanner"
+  failOn = "high"  # Strict: fail on high severity
+  ```
+</ParamField>
+
+<ParamField path="reportOn" type="enum">
+  Only show findings at or above this severity level.
+  
+  **Values:** `"off"`, `"high"`, `"medium"`, `"low"`
+  
+  ```toml
+  [[skills]]
+  name = "linter"
+  reportOn = "medium"  # Hide low severity findings
+  ```
+</ParamField>
+
+<ParamField path="maxFindings" type="number">
+  Maximum findings to report for this skill.
+  
+  ```toml
+  [[skills]]
+  name = "style-checker"
+  maxFindings = 20
+  ```
+</ParamField>
+
+<ParamField path="reportOnSuccess" type="boolean">
+  Post a report even when no findings are detected.
+  
+  ```toml
+  [[skills]]
+  name = "compliance-check"
+  reportOnSuccess = true  # Always report results
+  ```
+</ParamField>
+
+<ParamField path="minConfidence" type="enum">
+  Filter out findings below this confidence level.
+  
+  **Values:** `"off"`, `"high"`, `"medium"`, `"low"`
+  
+  ```toml
+  [[skills]]
+  name = "bug-detector"
+  minConfidence = "high"  # Only high confidence findings
+  ```
+</ParamField>
+
+## GitHub Integration
+
+<ParamField path="requestChanges" type="boolean">
+  Use `REQUEST_CHANGES` review event when findings exceed `failOn`.
+  
+  **Default:** `false`
+  
+  ```toml
+  [[skills]]
+  name = "security-scanner"
+  requestChanges = true  # Block PR with request changes
+  ```
+</ParamField>
+
+<ParamField path="failCheck" type="boolean">
+  Fail the GitHub Actions check run when findings exceed `failOn`.
+  
+  **Default:** `false`
+  
+  ```toml
+  [[skills]]
+  name = "security-scanner"
+  failCheck = true  # Fail CI check
+  ```
+</ParamField>
+
+## Model Configuration
+
+<ParamField path="model" type="string">
+  Claude model for this skill. Overrides `defaults.model`.
+  
+  ```toml
+  [[skills]]
+  name = "deep-analysis"
+  model = "claude-opus-4-20250514"  # Use Opus for this skill
+  ```
+</ParamField>
+
+<ParamField path="maxTurns" type="number">
+  Maximum agentic turns per hunk analysis. Overrides `defaults.maxTurns`.
+  
+  **Default:** 50
+  
+  ```toml
+  [[skills]]
+  name = "complex-analysis"
+  maxTurns = 100  # Allow more iterations
+  ```
+</ParamField>
+
+### Model Precedence
+
+Model selection follows this priority order (highest to lowest):
+
+1. **Trigger-level** `model` (in `[[skills.triggers]]`)
+2. **Skill-level** `model` (in `[[skills]]`)
+3. **Defaults** `model` (in `[defaults]`)
+4. **CLI flag** `--model`
+5. **Environment variable** `WARDEN_MODEL`
+6. **SDK default**
+
+```toml
+# Example: Mixed model usage
+[defaults]
+model = "claude-sonnet-4-20250514"  # Default for most skills
+
+[[skills]]
+name = "quick-check"
+# Uses Sonnet from defaults
+
+[[skills]]
+name = "deep-analysis"
+model = "claude-opus-4-20250514"  # Overrides default
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened"]
+model = "claude-sonnet-4-20250514"  # Override skill model for PR trigger
+```
+
+## Triggers
+
+Skills can have multiple triggers that define when and where they run. See [Triggers](/configuration/triggers) for detailed configuration.
+
+```toml
+[[skills]]
+name = "my-skill"
+
+# Run on PR events
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+
+# Run locally only
+[[skills.triggers]]
+type = "local"
+
+# Run on schedule
+[[skills.triggers]]
+type = "schedule"
+```
+
+<Note>
+  Skills without triggers are **wildcard skills**—they run everywhere (PR, local, and schedule contexts). Add explicit triggers to limit when a skill runs.
+</Note>
+
+## Common Patterns
+
+### Security-Critical Files
+
+Strict analysis on authentication and payment code:
+
+```toml
+[[skills]]
+name = "security-scanner"
+model = "claude-opus-4-20250514"  # Use best model
+maxTurns = 100                    # Allow deep analysis
+paths = [
+  "src/auth/**",
+  "src/payments/**",
+  "src/api/auth/**"
+]
+failOn = "high"                  # Fail CI on high severity
+minConfidence = "high"           # Only high confidence
+requestChanges = true            # Block PR
+failCheck = true
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+```
+
+### Quick Linting
+
+Fast checks for code style:
+
+```toml
+[[skills]]
+name = "style-linter"
+model = "claude-sonnet-4-20250514"
+maxTurns = 10                     # Quick analysis
+paths = ["src/**/*.ts"]
+ignorepaths = ["**/*.test.ts"]
+reportOn = "medium"               # Hide low severity
+maxFindings = 50
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+### Local-Only Experimentation
+
+Skill that only runs via CLI, never in CI:
+
+```toml
+[[skills]]
+name = "experimental-checker"
+paths = ["src/**/*.ts"]
+reportOn = "low"                  # Show everything
+
+[[skills.triggers]]
+type = "local"                    # CLI only, won't run in GitHub Actions
+```
+
+### Scheduled Scans
+
+Nightly whole-repository analysis:
+
+```toml
+[[skills]]
+name = "nightly-audit"
+paths = ["src/**/*.ts", "lib/**/*.js"]
+reportOn = "low"                  # Capture everything
+
+[[skills.triggers]]
+type = "schedule"
+
+[skills.triggers.schedule]
+issueTitle = "Nightly Security Audit"
+createFixPR = true
+fixBranchPrefix = "security-fix"
+```
+
+### Skip Test Files
+
+Analyze production code only:
+
+```toml
+[[skills]]
+name = "production-checker"
+paths = ["src/**/*.ts"]
+ignorepaths = [
+  "**/*.test.ts",
+  "**/*.spec.ts",
+  "**/__tests__/**",
+  "**/__mocks__/**"
+]
+```
+
+### Multiple Skill Coordination
+
+Different skills for different parts of the codebase:
+
+```toml
+# Strict security checks
+[[skills]]
+name = "security-scanner"
+paths = ["src/auth/**", "src/payments/**"]
+failOn = "high"
+minConfidence = "high"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+
+# General code quality
+[[skills]]
+name = "code-quality"
+paths = ["src/**/*.ts"]
+ignorepaths = ["src/auth/**", "src/payments/**"]  # Exclude security paths
+failOn = "medium"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+
+# Documentation checks
+[[skills]]
+name = "doc-checker"
+paths = ["**/*.md", "docs/**"]
+reportOn = "low"
+
+[[skills.triggers]]
+type = "local"  # Only run manually
+```
+
+## Skill Resolution
+
+Warden looks for skills in this order:
+
+1. **Remote skills** (if `remote` field is specified)
+2. **`.agents/skills/<name>/SKILL.md`**
+3. **`.claude/skills/<name>/SKILL.md`**
+4. **Skills added via `warden add`** (cached in `WARDEN_STATE_DIR`)
+
+```bash
+# Directory structure for local skills
+.agents/skills/
+├── security-scanner/
+│   ├── SKILL.md          # Main skill prompt
+│   ├── references/       # Optional reference docs
+│   └── scripts/          # Optional helper scripts
+└── code-quality/
+    └── SKILL.md
+```
+
+## Validation Rules
+
+<Warning>
+  **Unique names required:** Each skill must have a unique name across all `[[skills]]` entries.
+</Warning>
+
+<Warning>
+  **Schedule triggers require paths:** Skills with `type = "schedule"` triggers must specify `paths`.
+  
+  ```toml
+  # ❌ Invalid
+  [[skills]]
+  name = "nightly-scan"
+  
+  [[skills.triggers]]
+  type = "schedule"  # Error: paths required!
+  
+  # ✅ Valid
+  [[skills]]
+  name = "nightly-scan"
+  paths = ["src/**/*.ts"]
+  
+  [[skills.triggers]]
+  type = "schedule"
+  ```
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Triggers" icon="bolt" href="/configuration/triggers">
+    Configure when and where skills run
+  </Card>
+  <Card title="Path Filtering" icon="filter" href="/configuration/path-filtering">
+    Advanced path patterns and chunking
+  </Card>
+  <Card title="Severity Thresholds" icon="gauge" href="/configuration/severity-thresholds">
+    Fine-tune severity and confidence
+  </Card>
+  <Card title="Creating Skills" icon="wand-magic-sparkles" href="/guides/creating-skills">
+    Write your own custom skills
+  </Card>
+</CardGroup>

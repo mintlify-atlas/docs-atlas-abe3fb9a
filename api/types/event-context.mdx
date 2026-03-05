@@ -1,0 +1,315 @@
+---
+title: 'EventContext'
+description: 'GitHub event and repository context types'
+icon: 'git-alt'
+---
+
+## EventContext
+
+Complete context about a GitHub event triggering Warden analysis.
+
+<ResponseField name="eventType" type="GitHubEventType" required>
+  Type of GitHub event:
+  - `"pull_request"` - PR opened, updated, or closed
+  - `"issues"` - Issue opened, edited, or closed
+  - `"issue_comment"` - Comment on issue or PR
+  - `"pull_request_review"` - PR review submitted
+  - `"pull_request_review_comment"` - Comment on PR diff
+  - `"schedule"` - Scheduled cron trigger
+</ResponseField>
+
+<ResponseField name="action" type="string" required>
+  Specific action within the event type (e.g., `"opened"`, `"synchronize"`, `"reopened"`, `"closed"`)
+</ResponseField>
+
+<ResponseField name="repository" type="RepositoryContext" required>
+  Information about the repository where the event occurred
+</ResponseField>
+
+<ResponseField name="pullRequest" type="PullRequestContext" default="undefined">
+  Pull request details (only present for PR-related events)
+</ResponseField>
+
+<ResponseField name="repoPath" type="string" required>
+  Absolute path to the local repository checkout
+</ResponseField>
+
+---
+
+## PullRequestContext
+
+Detailed information about a pull request.
+
+<ResponseField name="number" type="number" required>
+  PR number (must be a positive integer)
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  PR title
+</ResponseField>
+
+<ResponseField name="body" type="string | null" required>
+  PR description body (null if empty)
+</ResponseField>
+
+<ResponseField name="author" type="string" required>
+  GitHub username of the PR author
+</ResponseField>
+
+<ResponseField name="baseBranch" type="string" required>
+  Target branch name (e.g., `"main"`, `"develop"`)
+</ResponseField>
+
+<ResponseField name="headBranch" type="string" required>
+  Source branch name (e.g., `"feature/new-auth"`)
+</ResponseField>
+
+<ResponseField name="headSha" type="string" required>
+  Git commit SHA of the head branch (latest commit in the PR)
+</ResponseField>
+
+<ResponseField name="baseSha" type="string" required>
+  Git commit SHA of the base branch (merge target)
+</ResponseField>
+
+<ResponseField name="files" type="FileChange[]" required>
+  List of all files changed in the PR
+</ResponseField>
+
+---
+
+## RepositoryContext
+
+Information about a GitHub repository.
+
+<ResponseField name="owner" type="string" required>
+  Repository owner username or organization name
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Repository name (without owner)
+</ResponseField>
+
+<ResponseField name="fullName" type="string" required>
+  Full repository name in `owner/name` format (e.g., `"sentry/warden"`)
+</ResponseField>
+
+<ResponseField name="defaultBranch" type="string" required>
+  Default branch name (e.g., `"main"`, `"master"`, `"develop"`)
+</ResponseField>
+
+---
+
+## FileChange
+
+Information about a single file changed in a pull request.
+
+<ResponseField name="filename" type="string" required>
+  Path to the file relative to repository root
+</ResponseField>
+
+<ResponseField name="status" type="FileStatus" required>
+  Type of change:
+  - `"added"` - New file
+  - `"removed"` - Deleted file
+  - `"modified"` - Changed file
+  - `"renamed"` - File moved/renamed
+  - `"copied"` - File copied
+  - `"changed"` - Generic change
+  - `"unchanged"` - No changes (rare)
+</ResponseField>
+
+<ResponseField name="additions" type="number" required>
+  Number of lines added (must be non-negative)
+</ResponseField>
+
+<ResponseField name="deletions" type="number" required>
+  Number of lines deleted (must be non-negative)
+</ResponseField>
+
+<ResponseField name="patch" type="string" default="undefined">
+  Unified diff patch showing the changes. May be absent for binary files or very large diffs.
+</ResponseField>
+
+<ResponseField name="chunks" type="number" default="undefined">
+  Number of diff hunks in the patch (calculated automatically if patch is present)
+</ResponseField>
+
+---
+
+## GitHubEventType
+
+Supported GitHub event types:
+
+```typescript
+type GitHubEventType =
+  | 'pull_request'
+  | 'issues'
+  | 'issue_comment'
+  | 'pull_request_review'
+  | 'pull_request_review_comment'
+  | 'schedule';
+```
+
+---
+
+## PullRequestAction
+
+Common pull request actions:
+
+```typescript
+type PullRequestAction =
+  | 'opened'      // PR created
+  | 'synchronize' // New commits pushed
+  | 'reopened'    // PR reopened after being closed
+  | 'closed';     // PR closed or merged
+```
+
+---
+
+## Example: Pull Request Event Context
+
+```typescript
+import type { EventContext } from '@sentry/warden';
+
+const context: EventContext = {
+  eventType: 'pull_request',
+  action: 'synchronize',
+  repository: {
+    owner: 'sentry',
+    name: 'warden',
+    fullName: 'sentry/warden',
+    defaultBranch: 'main'
+  },
+  pullRequest: {
+    number: 42,
+    title: 'Add SQL injection detection',
+    body: 'Implements new security skill for detecting SQL injection vulnerabilities',
+    author: 'security-team',
+    baseBranch: 'main',
+    headBranch: 'feature/sql-injection-skill',
+    headSha: '7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b',
+    baseSha: '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b',
+    files: [
+      {
+        filename: 'src/auth/login.ts',
+        status: 'modified',
+        additions: 12,
+        deletions: 8,
+        chunks: 3,
+        patch: `@@ -42,8 +42,12 @@
+-const query = \`SELECT * FROM users WHERE id = \${userId}\`;
+-const user = db.get(query);
++const query = db.prepare('SELECT * FROM users WHERE id = ?');
++const user = query.get(userId);
+`
+      },
+      {
+        filename: 'skills/security-audit/SKILL.md',
+        status: 'added',
+        additions: 45,
+        deletions: 0,
+        chunks: 1,
+        patch: '@@ -0,0 +1,45 @@\n+# Security Audit Skill\n+...'
+      }
+    ]
+  },
+  repoPath: '/home/runner/work/sentry/warden'
+};
+```
+
+---
+
+## Example: Schedule Event Context
+
+```typescript
+import type { EventContext } from '@sentry/warden';
+
+const context: EventContext = {
+  eventType: 'schedule',
+  action: 'cron',
+  repository: {
+    owner: 'sentry',
+    name: 'warden',
+    fullName: 'sentry/warden',
+    defaultBranch: 'main'
+  },
+  pullRequest: undefined, // No PR for scheduled runs
+  repoPath: '/home/runner/work/sentry/warden'
+};
+```
+
+---
+
+## Building Event Context
+
+Warden automatically constructs event context from GitHub Actions environment:
+
+```typescript
+import { buildEventContext } from '@sentry/warden';
+import { Octokit } from '@octokit/rest';
+
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+
+const context = await buildEventContext(
+  process.env.GITHUB_EVENT_NAME,      // 'pull_request'
+  JSON.parse(process.env.GITHUB_EVENT_PATH), // Event payload
+  process.env.GITHUB_WORKSPACE,       // Repository path
+  octokit                             // GitHub API client
+);
+```
+
+<Note>
+  When running locally via CLI, Warden synthesizes a minimal event context based on the current git state.
+</Note>
+
+---
+
+## Utility: Counting Patch Chunks
+
+Warden provides a utility to count hunks in a patch:
+
+```typescript
+import { countPatchChunks } from '@sentry/warden';
+
+const patch = `@@ -10,3 +10,4 @@
+ line1
+-line2
++line2 modified
++line3 added
+ line4
+@@ -20,2 +21,2 @@
+-old
++new`;
+
+const chunks = countPatchChunks(patch);
+// 2 (two @@ headers)
+```
+
+---
+
+## Validation
+
+All context types are validated using Zod schemas:
+
+```typescript
+import {
+  EventContextSchema,
+  PullRequestContextSchema,
+  RepositoryContextSchema,
+  FileChangeSchema
+} from '@sentry/warden';
+
+// Parse and validate
+const validated = EventContextSchema.parse(rawContext);
+
+// Safe parse
+const result = EventContextSchema.safeParse(rawContext);
+if (!result.success) {
+  console.error('Invalid context:', result.error);
+}
+```
+
+<Note>
+  Warden validates all GitHub event payloads to ensure they contain required fields. Invalid payloads will cause analysis to fail early with clear error messages.
+</Note>

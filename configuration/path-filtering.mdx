@@ -1,0 +1,509 @@
+---
+title: Path Filtering
+description: Control which files are analyzed and how they're processed
+---
+
+Path filtering determines which files Warden analyzes and how. Configure patterns at the global or skill level, and customize chunking behavior for different file types.
+
+## Path Patterns
+
+Use glob patterns to include or exclude files from analysis.
+
+### Include Patterns
+
+<ParamField path="paths" type="array">
+  Glob patterns for files to analyze. Can be set at skill level or in defaults.
+  
+  ```toml
+  [[skills]]
+  name = "my-skill"
+  paths = [
+    "src/**/*.ts",      # All TypeScript in src/
+    "lib/**/*.js",      # All JavaScript in lib/
+    "**/*.config.ts"    # Config files anywhere
+  ]
+  ```
+</ParamField>
+
+### Exclude Patterns
+
+<ParamField path="ignorePaths" type="array">
+  Glob patterns for files to exclude. Skill-level patterns combine with `defaults.ignorePaths`.
+  
+  ```toml
+  [defaults]
+  ignorePaths = [
+    "dist/**",          # Build output
+    "node_modules/**"   # Dependencies
+  ]
+  
+  [[skills]]
+  name = "my-skill"
+  ignorePaths = [
+    "**/*.test.ts",     # Test files
+    "**/*.spec.ts"      # Spec files
+  ]
+  # Effective patterns: dist/**, node_modules/**, **/*.test.ts, **/*.spec.ts
+  ```
+</ParamField>
+
+<Warning>
+  **Additive behavior:** Skill-level `ignorePaths` are **added** to `defaults.ignorePaths`. You cannot override a default exclusion at the skill level—remove it from defaults instead.
+</Warning>
+
+### Pattern Syntax
+
+Warden uses glob pattern matching:
+
+| Pattern | Matches |
+|---------|--------|
+| `src/**/*.ts` | All `.ts` files in `src/` and subdirectories |
+| `**/*.test.ts` | All `.test.ts` files anywhere |
+| `src/auth/**` | Everything in `src/auth/` and subdirectories |
+| `*.config.js` | Config files in root only |
+| `**/migrations/*` | All files directly in any `migrations/` directory |
+| `lib/*.{ts,js}` | `.ts` and `.js` files directly in `lib/` |
+
+### Pattern Examples
+
+**Include specific directories:**
+
+```toml
+paths = [
+  "src/auth/**",
+  "src/payments/**",
+  "src/api/**"
+]
+```
+
+**Include by file extension:**
+
+```toml
+paths = [
+  "**/*.ts",
+  "**/*.tsx",
+  "**/*.js",
+  "**/*.jsx"
+]
+```
+
+**Exclude test and generated files:**
+
+```toml
+ignorepaths = [
+  "**/*.test.ts",
+  "**/*.spec.ts",
+  "**/__tests__/**",
+  "**/__mocks__/**",
+  "**/generated/**",
+  "**/*.generated.ts"
+]
+```
+
+**Include configs, exclude test configs:**
+
+```toml
+paths = ["**/*.config.ts"]
+ignorepaths = ["**/*.test.config.ts"]
+```
+
+## Built-in Skip Patterns
+
+These patterns are **always** applied before user patterns and cannot be overridden:
+
+### Package Manager Locks
+
+- `**/pnpm-lock.yaml`
+- `**/package-lock.json`
+- `**/yarn.lock`
+- `**/Cargo.lock`
+- `**/go.sum`
+- `**/poetry.lock`
+- `**/composer.lock`
+- `**/Gemfile.lock`
+- `**/Pipfile.lock`
+- `**/bun.lockb`
+
+### Minified/Bundled Code
+
+- `**/*.min.js`
+- `**/*.min.css`
+- `**/*.bundle.js`
+- `**/*.bundle.css`
+
+### Build Artifacts
+
+- `**/dist/**`
+- `**/build/**`
+- `**/node_modules/**`
+- `**/.next/**`
+- `**/out/**`
+- `**/coverage/**`
+
+### Generated Code
+
+- `**/*.generated.*`
+- `**/*.g.ts`
+- `**/*.g.dart`
+- `**/generated/**`
+- `**/__generated__/**`
+
+<Note>
+  Built-in patterns ensure Warden doesn't waste time analyzing files that shouldn't be reviewed (lock files, build artifacts, etc.).
+</Note>
+
+## Chunking Configuration
+
+Chunking controls how files are split for analysis. Configure at the global level in `[defaults.chunking]`.
+
+### File Patterns
+
+<ParamField path="defaults.chunking.filePatterns" type="array">
+  Control processing mode for specific file types.
+  
+  Each pattern has:
+  - `pattern`: Glob pattern to match files
+  - `mode`: Processing mode (`"per-hunk"`, `"whole-file"`, or `"skip"`)
+  
+  ```toml
+  [[defaults.chunking.filePatterns]]
+  pattern = "**/*.config.*"
+  mode = "whole-file"  # Analyze entire config files
+  
+  [[defaults.chunking.filePatterns]]
+  pattern = "**/migrations/**"
+  mode = "skip"  # Skip database migrations
+  ```
+</ParamField>
+
+#### Processing Modes
+
+<Accordion title="per-hunk (default)">
+  Analyze changed hunks (diff sections) independently. Most efficient for large files with small changes.
+  
+  ```toml
+  [[defaults.chunking.filePatterns]]
+  pattern = "src/**/*.ts"
+  mode = "per-hunk"
+  ```
+</Accordion>
+
+<Accordion title="whole-file">
+  Analyze the entire file content in one pass. Useful for:
+  - Configuration files
+  - Small files where context matters
+  - Files where hunks are interdependent
+  
+  ```toml
+  [[defaults.chunking.filePatterns]]
+  pattern = "**/*.config.*"
+  mode = "whole-file"
+  ```
+</Accordion>
+
+<Accordion title="skip">
+  Skip files entirely. Overrides built-in skip patterns when you want to explicitly skip certain patterns.
+  
+  ```toml
+  [[defaults.chunking.filePatterns]]
+  pattern = "**/migrations/**"
+  mode = "skip"
+  ```
+</Accordion>
+
+<Note>
+  User-defined file patterns have **higher priority** than built-in skip patterns. Use `mode = "per-hunk"` to force analysis of files that would normally be skipped.
+</Note>
+
+### Coalescing
+
+Coalescing merges nearby hunks into larger chunks to reduce API calls and improve context.
+
+<ParamField path="defaults.chunking.coalesce.enabled" type="boolean">
+  Enable hunk coalescing.
+  
+  **Default:** `true`
+  
+  ```toml
+  [defaults.chunking.coalesce]
+  enabled = true
+  ```
+</ParamField>
+
+<ParamField path="defaults.chunking.coalesce.maxGapLines" type="number">
+  Maximum line gap between hunks to merge.
+  
+  **Default:** 30
+  
+  ```toml
+  [defaults.chunking.coalesce]
+  maxGapLines = 50  # Merge hunks up to 50 lines apart
+  ```
+</ParamField>
+
+<ParamField path="defaults.chunking.coalesce.maxChunkSize" type="number">
+  Target maximum chunk size in characters.
+  
+  **Default:** 8000
+  
+  ```toml
+  [defaults.chunking.coalesce]
+  maxChunkSize = 12000  # Larger chunks for more context
+  ```
+</ParamField>
+
+### Context Files
+
+<ParamField path="defaults.chunking.maxContextFiles" type="number">
+  Maximum number of "other files" to list in hunk prompts for PR context. Set to `0` to disable entirely.
+  
+  **Default:** 50
+  
+  ```toml
+  [defaults.chunking]
+  maxContextFiles = 100  # Show more context
+  ```
+</ParamField>
+
+## Complete Chunking Example
+
+```toml
+version = 1
+
+[defaults.chunking]
+maxContextFiles = 50
+
+# Coalescing settings
+[defaults.chunking.coalesce]
+enabled = true
+maxGapLines = 30
+maxChunkSize = 8000
+
+# Skip lock files explicitly (redundant with built-ins, shown for clarity)
+[[defaults.chunking.filePatterns]]
+pattern = "**/pnpm-lock.yaml"
+mode = "skip"
+
+# Analyze entire config files
+[[defaults.chunking.filePatterns]]
+pattern = "**/*.config.ts"
+mode = "whole-file"
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/*.config.js"
+mode = "whole-file"
+
+# Skip database migrations
+[[defaults.chunking.filePatterns]]
+pattern = "**/migrations/**"
+mode = "skip"
+
+# Analyze schema files as a whole
+[[defaults.chunking.filePatterns]]
+pattern = "**/schema.ts"
+mode = "whole-file"
+
+# Per-hunk for regular source files (explicit, this is the default)
+[[defaults.chunking.filePatterns]]
+pattern = "src/**/*.ts"
+mode = "per-hunk"
+```
+
+## Common Patterns
+
+### TypeScript/JavaScript Project
+
+```toml
+[defaults]
+ignorepaths = [
+  "dist/**",
+  "build/**",
+  "node_modules/**",
+  "**/*.test.ts",
+  "**/*.spec.ts"
+]
+
+[[skills]]
+name = "code-quality"
+paths = [
+  "src/**/*.ts",
+  "src/**/*.tsx",
+  "lib/**/*.js"
+]
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/*.config.*"
+mode = "whole-file"
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/tsconfig.json"
+mode = "whole-file"
+```
+
+### Security-Critical Paths
+
+```toml
+[[skills]]
+name = "security-scanner"
+paths = [
+  "src/auth/**",
+  "src/payments/**",
+  "src/api/auth/**"
+]
+ignorepaths = [
+  "**/*.test.ts",
+  "**/__mocks__/**"
+]
+failOn = "high"
+```
+
+### Monorepo with Package Filtering
+
+```toml
+[[skills]]
+name = "backend-checker"
+paths = ["packages/backend/src/**/*.ts"]
+ignorepaths = ["packages/backend/src/**/*.test.ts"]
+
+[[skills]]
+name = "frontend-checker"
+paths = ["packages/frontend/src/**/*.tsx"]
+ignorepaths = [
+  "packages/frontend/src/**/*.test.tsx",
+  "packages/frontend/src/stories/**"
+]
+```
+
+### Skip Generated and Legacy Code
+
+```toml
+[defaults]
+ignorepaths = [
+  "src/generated/**",
+  "src/legacy/**",
+  "**/*.generated.ts",
+  "**/__generated__/**"
+]
+```
+
+### Different Skills for Different File Types
+
+```toml
+[[skills]]
+name = "typescript-checker"
+paths = ["src/**/*.ts", "src/**/*.tsx"]
+
+[[skills]]
+name = "python-checker"
+paths = ["scripts/**/*.py", "tools/**/*.py"]
+ignorepaths = ["**/__pycache__/**"]
+
+[[skills]]
+name = "yaml-checker"
+paths = ["**/*.yml", "**/*.yaml"]
+ignorepaths = ["**/pnpm-lock.yaml", "**/.github/**"]
+```
+
+### Analyze Configs as Whole Files
+
+```toml
+# Ensure config files get full-file context
+[[defaults.chunking.filePatterns]]
+pattern = "**/*.config.{ts,js,mjs,cjs}"
+mode = "whole-file"
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/tsconfig.json"
+mode = "whole-file"
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/package.json"
+mode = "whole-file"
+
+[[defaults.chunking.filePatterns]]
+pattern = "**/.eslintrc.*"
+mode = "whole-file"
+```
+
+## Pattern Precedence
+
+File classification follows this order:
+
+1. **User-defined file patterns** (`defaults.chunking.filePatterns`) - checked first
+2. **Built-in skip patterns** - checked if no user pattern matches
+3. **Default mode** (`per-hunk`) - used if no patterns match
+
+This allows you to override built-in skips:
+
+```toml
+# Force analysis of package.json (normally skipped if in node_modules/)
+[[defaults.chunking.filePatterns]]
+pattern = "**/package.json"
+mode = "whole-file"
+```
+
+## Performance Considerations
+
+<Accordion title="Coalescing reduces API calls">
+  Merging nearby hunks reduces the number of LLM API calls:
+  
+  - **Without coalescing:** 10 small hunks = 10 API calls
+  - **With coalescing:** 10 small hunks merge into 2-3 chunks = 2-3 API calls
+  
+  Trade-off: Larger chunks may include irrelevant code.
+</Accordion>
+
+<Accordion title="Whole-file mode is slower">
+  `whole-file` mode sends the entire file content to the LLM, which:
+  
+  - Increases token usage and cost
+  - Takes longer to process
+  - Provides more context for analysis
+  
+  Use `whole-file` selectively for small, critical files.
+</Accordion>
+
+<Accordion title="Skip patterns improve speed">
+  Aggressive use of `ignorePaths` and skip patterns:
+  
+  - Reduces the number of files analyzed
+  - Speeds up analysis significantly
+  - Lowers API costs
+  
+  Always exclude test files, build artifacts, and dependencies.
+</Accordion>
+
+## Debugging
+
+Use verbose flags to see which files are being processed:
+
+```bash
+# Show which files match patterns
+warden -v
+
+# Show detailed skip reasons
+warden -vv
+```
+
+Output shows:
+- Files matched by `paths`
+- Files excluded by `ignorePaths`
+- Files skipped by built-in patterns
+- Processing mode for each file (per-hunk, whole-file, skip)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skill Configuration" icon="puzzle-piece" href="/configuration/skill-config">
+    Configure skill behavior
+  </Card>
+  <Card title="Severity Thresholds" icon="gauge" href="/configuration/severity-thresholds">
+    Control finding levels
+  </Card>
+  <Card title="Performance Tuning" icon="gauge-high" href="/guides/performance">
+    Optimize analysis speed and cost
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/reference/cli">
+    Command-line options
+  </Card>
+</CardGroup>

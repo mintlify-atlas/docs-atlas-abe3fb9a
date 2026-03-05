@@ -1,0 +1,376 @@
+---
+title: "warden sync"
+description: "Update remote skill definitions to their latest versions"
+---
+
+## Overview
+
+The `warden sync` command updates remote skills to their latest versions. It refreshes the local cache of skills from GitHub repositories.
+
+## Usage
+
+```bash
+warden sync [options]
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Discover remote skills">
+    Warden scans `warden.toml` for skills with `remote` field:
+
+    ```toml warden.toml
+    [[skills]]
+    name = "security-audit"
+    remote = "getsentry/skills"
+    ```
+  </Step>
+
+  <Step title="Check for updates">
+    For unpinned skills (no `@sha`), Warden fetches the latest version from GitHub.
+  </Step>
+
+  <Step title="Update local cache">
+    Downloads updated skill definitions to `~/.warden/cache/skills/`.
+  </Step>
+
+  <Step title="Report changes">
+    Shows which skills were updated.
+  </Step>
+</Steps>
+
+## Pinned vs Unpinned Skills
+
+### Unpinned (updates automatically)
+
+```toml warden.toml
+[[skills]]
+name = "security-audit"
+remote = "getsentry/skills"  # No @sha - updates on sync
+```
+
+Running `sync` fetches the latest version.
+
+### Pinned (requires manual update)
+
+```toml warden.toml
+[[skills]]
+name = "security-audit"
+remote = "getsentry/skills@abc1234"  # Pinned to SHA
+```
+
+Running `sync` has no effect. To update:
+
+1. Remove the `@sha` part
+2. Run `warden sync`
+3. Check the new version
+4. Pin to new SHA if desired
+
+## Examples
+
+### Sync all remote skills
+
+```bash
+$ npx warden sync
+
+🔄 Syncing remote skills...
+
+🔍 Found 2 remote skills:
+  • security-audit (getsentry/skills)
+  • code-quality (getsentry/skills)
+
+✓ security-audit: Updated to abc1234 (was def5678)
+✓ code-quality: Up to date (abc1234)
+
+✓ Synced 2 skills
+```
+
+### No updates available
+
+```bash
+$ npx warden sync
+
+🔄 Syncing remote skills...
+
+🔍 Found 2 remote skills:
+  • security-audit (getsentry/skills@abc1234) [pinned]
+  • code-quality (getsentry/skills) [up to date]
+
+✓ All skills up to date
+```
+
+## Options
+
+### --force
+
+Force re-download even if up to date:
+
+```bash
+npx warden sync --force
+```
+
+Useful if cache is corrupted.
+
+### --verbose
+
+Show detailed progress:
+
+```bash
+npx warden sync --verbose
+```
+
+Output:
+
+```
+🔄 Syncing remote skills...
+
+🔍 Checking getsentry/skills...
+  • Fetching latest commit: abc1234
+  • Downloading skills/security-audit/SKILL.md
+  • Cache updated: ~/.warden/cache/skills/getsentry-skills-abc1234
+
+✓ security-audit: Updated to abc1234
+```
+
+## Cache Location
+
+Remote skills are cached in:
+
+```
+~/.warden/cache/skills/
+├── getsentry-skills-abc1234/
+│   ├── security-audit/
+│   │   └── SKILL.md
+│   └── code-quality/
+│       └── SKILL.md
+```
+
+Each repository version is cached separately.
+
+## When to Sync
+
+### Regular maintenance
+
+Sync weekly to get latest improvements:
+
+```bash
+npx warden sync
+```
+
+### Before important analysis
+
+Sync before analyzing critical changes:
+
+```bash
+npx warden sync
+npx warden main..feature-branch
+```
+
+### After skill updates
+
+When skill maintainers release updates:
+
+```bash
+npx warden sync --force
+```
+
+### In CI/CD
+
+Sync in CI to get latest versions:
+
+```yaml .github/workflows/warden.yml
+- name: Sync skills
+  run: npx warden sync
+
+- name: Run Warden
+  run: npx warden
+```
+
+## Comparison with `add --force`
+
+| Command | Effect |
+|---------|--------|
+| `warden sync` | Updates all unpinned remote skills |
+| `warden add <skill> --force` | Re-adds one skill (overwrites config) |
+
+### When to use sync
+
+Update skills without changing configuration:
+
+```bash
+npx warden sync
+```
+
+### When to use add --force
+
+Reset skill configuration to defaults:
+
+```bash
+npx warden add security-audit --force
+```
+
+## Managing Skill Versions
+
+### Check current versions
+
+View remote references in `warden.toml`:
+
+```bash
+grep -A 1 'remote =' warden.toml
+```
+
+Output:
+
+```toml
+remote = "getsentry/skills"
+--
+remote = "getsentry/skills@abc1234"
+```
+
+### Pin to current version
+
+After syncing, pin to the new version:
+
+```bash
+# Sync to get latest
+npx warden sync --verbose
+
+# Note the SHA from output: abc1234
+
+# Edit warden.toml
+remote = "getsentry/skills@abc1234"
+```
+
+### Unpin to allow updates
+
+Remove the `@sha` part:
+
+```toml warden.toml
+# Before (pinned)
+remote = "getsentry/skills@abc1234"
+
+# After (unpinned)
+remote = "getsentry/skills"
+```
+
+Then run `sync` to update.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Sync fails with 'Not found'">
+    The remote repository may not exist or is private:
+
+    ```
+    ✗ Failed to sync getsentry/nonexistent: Repository not found
+    ```
+
+    **Solutions:**
+    1. Verify the repository exists: `https://github.com/getsentry/skills`
+    2. Check for typos in `warden.toml`
+    3. For private repos, set `GITHUB_TOKEN` environment variable
+  </Accordion>
+
+  <Accordion title="Sync fails with 'Rate limit exceeded'">
+    GitHub API rate limit reached:
+
+    ```
+    ✗ Failed to sync: API rate limit exceeded
+    ```
+
+    **Solutions:**
+    1. Wait an hour for rate limit to reset
+    2. Set `GITHUB_TOKEN` for higher rate limits (5,000/hour vs 60/hour)
+
+    ```bash
+    export GITHUB_TOKEN=ghp_...
+    npx warden sync
+    ```
+  </Accordion>
+
+  <Accordion title="Skills not updating">
+    Skills may be pinned:
+
+    ```bash
+    $ npx warden sync
+    ✓ All skills up to date
+    ```
+
+    **Solution:**
+    Check for `@sha` in `warden.toml`:
+
+    ```bash
+    grep 'remote =' warden.toml
+    ```
+
+    Remove `@sha` to allow updates.
+  </Accordion>
+
+  <Accordion title="Cache corruption">
+    If skills behave strangely after sync:
+
+    ```bash
+    # Clear cache
+    rm -rf ~/.warden/cache/skills/
+
+    # Re-sync
+    npx warden sync --force
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+### Development: Unpinned
+
+Use unpinned skills for active development:
+
+```toml warden.toml
+[[skills]]
+name = "code-quality"
+remote = "getsentry/skills"  # Gets latest improvements
+```
+
+### Production: Pinned
+
+Pin skills in production for stability:
+
+```toml warden.toml
+[[skills]]
+name = "security-audit"
+remote = "getsentry/skills@abc1234"  # Stable, tested version
+```
+
+### Update workflow
+
+1. Sync in development:
+   ```bash
+   npx warden sync
+   npx warden  # Test new versions
+   ```
+
+2. Pin to tested SHA:
+   ```toml
+   remote = "getsentry/skills@abc1234"
+   ```
+
+3. Deploy to production
+
+4. Repeat monthly or quarterly
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Add skills" icon="plus" href="/cli/add">
+    Add new skills to configuration
+  </Card>
+  <Card title="Remote skills" icon="cloud" href="/skills/remote-skills">
+    Complete guide to remote skills
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/skill-config">
+    Skill configuration options
+  </Card>
+  <Card title="Troubleshooting" icon="circle-question" href="/advanced/troubleshooting">
+    Common issues and solutions
+  </Card>
+</CardGroup>

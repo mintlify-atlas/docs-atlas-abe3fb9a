@@ -1,0 +1,377 @@
+---
+title: 'Builtin Skills'
+description: 'Documentation of Warden builtin skills in .agents/skills/'
+---
+
+Warden includes several builtin skills in the `.agents/skills/` directory. These serve as examples and can be used directly in your projects.
+
+## find-warden-bugs
+
+**Purpose**: Detect bugs at Warden's architectural seams based on 40+ historical fix commits.
+
+**Location**: `.agents/skills/find-warden-bugs/SKILL.md`
+
+### What It Detects
+
+This skill targets recurring bug patterns in Warden's architecture:
+
+<AccordionGroup>
+  <Accordion title="Check 1: SDK Response Shape Assumptions">
+    **Severity**: High
+    
+    Claude SDK responses have specific shapes that have caused repeated issues. The skill detects:
+    
+    - Accessing `response.content[0]` without checking array length or block type
+    - Accessing `msg.usage.input_tokens` without null check on usage
+    - Type predicates that silently filter unknown content types
+    - Accessing `cache_read_input_tokens` without handling null
+    - Parsing `SDKResultMessage` without checking `is_error` or `subtype`
+    
+    **Example vulnerability**:
+    ```typescript
+    // Unsafe - content could be empty
+    const text = response.content[0].text;
+    
+    // Safe - checks exist
+    if (response.content[0]?.type === 'text') {
+      const text = response.content[0].text;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Check 2: Dual Code Path Desync">
+    **Severity**: High
+    
+    Warden has two paths that build `SkillReport` objects:
+    - `runSkill()` in `src/sdk/analyze.ts` (SDK/action)
+    - `runSkillTask()` in `src/cli/output/tasks.ts` (CLI)
+    
+    The skill detects when changes to one path aren't mirrored in the other:
+    - Adding fields to `SkillReport` in only one path
+    - Different post-processing logic
+    - Inconsistent error handling
+    
+    **Example issue**:
+    ```typescript
+    // src/sdk/analyze.ts adds new field
+    return { ...baseReport, newField: value };
+    
+    // But src/cli/output/tasks.ts doesn't
+    return { ...baseReport }; // Missing newField!
+    ```
+  </Accordion>
+  
+  <Accordion title="Check 3: Config Threading & Default Semantics">
+    **Severity**: High
+    
+    Config flows through a 3-level merge chain. The skill detects:
+    - Breaking merge precedence (trigger > skill > defaults)
+    - Using `||` when `??` is needed (0/false/"" are valid)
+    - New config fields not threaded through `resolveSkillConfigs()`
+    - `emptyToUndefined()` not applied to GitHub Actions inputs
+    
+    **Example bug**:
+    ```typescript
+    // Wrong - treats 0 as falsy
+    const limit = config.limit || 100;
+    
+    // Right - treats 0 as valid
+    const limit = config.limit ?? 100;
+    ```
+  </Accordion>
+  
+  <Accordion title="Check 4: Concurrent Task & Ink Rendering">
+    **Severity**: High
+    
+    Skills run concurrently via `runPool()` while Ink renders a live UI. Detects:
+    - Mutating shared state from callbacks without synchronization
+    - Sort comparators accessing external mutable state
+    - Writing to `process.stderr` while Ink is rendering
+    - Not checking `shouldAbort()` after semaphore acquisition
+    
+    **Example race**:
+    ```typescript
+    // Unsafe - shared array mutated during sort
+    const sorted = findings.sort((a, b) => {
+      // findings array might change during sort!
+    });
+    
+    // Safe - snapshot first
+    const sorted = [...findings].sort((a, b) => ...);
+    ```
+  </Accordion>
+  
+  <Accordion title="Check 5: Output Rendering Consistency">
+    **Severity**: Medium
+    
+    Warden renders in multiple formats (terminal, JSON, JSONL, GitHub checks). Detects:
+    - Display filtering applied before JSON serialization
+    - `--json` flag short-circuiting before all findings collected
+    - Reading log files that weren't verified to exist
+    - GitHub annotations built from filtered findings
+    
+    **Example issue**:
+    ```typescript
+    // Wrong - filters before JSON output
+    const displayed = findings.filter(f => f.severity === 'high');
+    if (opts.json) return JSON.stringify(displayed);
+    
+    // Right - filter only for display
+    if (opts.json) return JSON.stringify(findings);
+    const displayed = findings.filter(...);
+    ```
+  </Accordion>
+  
+  <Accordion title="Other Checks">
+    The skill includes additional checks for:
+    - **Check 6**: Scope & filtering logic (hunk line validation)
+    - **Check 7**: Early-exit path completeness (cleanup, output writes)
+    - **Check 8**: State tracking accuracy (counting operations correctly)
+    - **Check 9**: Error context & control flow (preserving error types)
+  </Accordion>
+</AccordionGroup>
+
+### Usage
+
+```toml warden.toml
+[[skills]]
+name = "find-warden-bugs"
+paths = ["src/**/*.ts"]
+ignorePaths = ["src/**/*.test.ts"]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+### Lessons for Your Skills
+
+- **Check-based structure**: Each check targets a specific historical pattern
+- **Zone classification**: Only run relevant checks based on file paths
+- **Safe patterns section**: Reduces false positives
+- **Historical context**: "Historical commits: 8+" shows this is a real problem
+- **Severity tied to impact**: High = normal usage breaks, Medium = edge cases
+
+## architecture-review
+
+**Purpose**: Staff-level codebase health review. Finds structural issues that compound over time.
+
+**Location**: `.agents/skills/architecture-review/SKILL.md`
+
+### What It Analyzes
+
+<AccordionGroup>
+  <Accordion title="1. Module Complexity">
+    Finds files that have grown too large or do too much:
+    - Files >500 lines (investigate >800)
+    - Modules with >3 distinct responsibilities
+    - High fan-out (importing from 10+ modules)
+    
+    Proposes splits with specific new file names and responsibilities.
+  </Accordion>
+  
+  <Accordion title="2. Silent Failure Patterns">
+    Code that fails without indication:
+    - Catch blocks returning defaults without logging
+    - Functions returning `[]` or `null` where caller can't distinguish error from empty
+    - Missing error callbacks on async operations
+    - Silent fallbacks hiding upstream problems
+  </Accordion>
+  
+  <Accordion title="3. Type Safety Gaps">
+    Places where TypeScript safety is bypassed:
+    - `as SomeType` without runtime validation
+    - Regex match assertions without checking capture groups
+    - Optional chaining (`?.`) hiding null sources
+    - Generic index access: `obj[key]`
+  </Accordion>
+  
+  <Accordion title="4. Test Coverage Analysis">
+    Maps tested vs critical:
+    - Untested critical paths (core logic, orchestration, error handling)
+    - Edge case gaps (empty inputs, null values, boundaries)
+    - Integration gaps (cross-module flows with only unit tests)
+    - Regression coverage (bug fixes without tests)
+  </Accordion>
+  
+  <Accordion title="5. LLM-Friendliness">
+    How well the code supports AI-assisted development:
+    - JSDoc coverage on exports
+    - Naming clarity (understandable without reading implementation)
+    - Actionable error messages
+    - Configuration footguns
+  </Accordion>
+</AccordionGroup>
+
+### Usage
+
+```bash
+# Run on entire codebase
+warden run --skill architecture-review --schedule
+
+# Or via config
+```
+
+```toml warden.toml
+[[skills]]
+name = "architecture-review"
+
+[[skills.triggers]]
+type = "schedule"
+cron = "0 0 * * 0"  # Weekly on Sunday
+```
+
+### Output Format
+
+Generates a structured report:
+
+```
+### Executive Summary
+- 3-5 bullet points of most impactful findings
+
+### Priority 1: [Category] (High Impact)
+**Problem**: What's wrong and why it matters
+**Evidence**: Specific files, line numbers, patterns
+**Recommendation**: Concrete fix with structure
+
+### What's Working Well
+Architectural strengths to preserve
+```
+
+### Lessons for Your Skills
+
+- **Macro over micro**: Focus on structural issues, not style preferences
+- **Pre-report checklist**: Validates work before reporting
+- **Risk prioritization**: Hot paths > edge cases > utilities
+- **Positive feedback**: "What's Working Well" preserves good patterns
+
+## testing-guidelines
+
+**Purpose**: Guide for writing tests. Used when adding functionality or fixing bugs.
+
+**Location**: `.agents/skills/testing-guidelines/SKILL.md`
+
+### Core Principles
+
+<Steps>
+  <Step title="Mock External Services, Use Real Fixtures">
+    Always mock third-party network services. Always use fixtures based on real-world data (sanitized).
+  </Step>
+  
+  <Step title="Prefer Integration Tests Over Unit Tests">
+    Focus on end-to-end tests validating inputs and outputs, not implementation details.
+  </Step>
+  
+  <Step title="Always Add Regression Tests for Bugs">
+    When a bug is found, add a test that would have caught it. Test should fail before fix, pass after.
+  </Step>
+  
+  <Step title="Cover Every User Entry Point">
+    At least one basic test for each CLI command, API endpoint, exported function.
+  </Step>
+</Steps>
+
+### Usage
+
+Reference this skill when writing tests:
+
+```bash
+# As a developer
+warden run --skill testing-guidelines --help
+
+# In agent instructions
+"When writing tests, follow /testing-guidelines skill"
+```
+
+### Lessons for Your Skills
+
+- **Principle-based**: Clear numbered principles, not exhaustive checklists
+- **Concrete examples**: Shows fixture format, test structure
+- **Checklist**: Pre-submission validation
+
+## agent-prompt
+
+**Purpose**: Reference guide for writing effective agent prompts and skills.
+
+**Location**: `.agents/skills/agent-prompt/SKILL.md`
+
+### Structure
+
+This skill acts as a router to detailed reference files:
+
+```
+.agents/skills/agent-prompt/
+├── SKILL.md                    # Main router
+└── references/
+    ├── core-principles.md      # Foundational rules
+    ├── skill-structure.md      # SKILL.md format
+    ├── system-prompts.md       # Architecture guide
+    ├── output-formats.md       # Structured JSON
+    ├── agentic-patterns.md     # Tool-using agents
+    ├── anti-patterns.md        # Common mistakes
+    ├── model-guidance.md       # Claude 4.x optimization
+    └── context-design.md       # Research notes
+```
+
+### Usage
+
+```bash
+# Get help writing a skill
+warden run --skill agent-prompt "How do I structure a security skill?"
+
+# Or use in agent tools
+"Read the agent-prompt skill for guidance on prompt engineering"
+```
+
+### Lessons for Your Skills
+
+- **Reference architecture**: Main skill routes to specialized docs
+- **Table-based routing**: "Read X when doing Y" guides context selection
+- **Bundled resources**: References live alongside the skill
+
+## Using Builtin Skills
+
+### Reference in Your Config
+
+```toml warden.toml
+# Use builtin skills directly by name
+[[skills]]
+name = "find-warden-bugs"
+
+[[skills.triggers]]
+type = "pull_request"
+```
+
+### Study Their Patterns
+
+The builtin skills demonstrate:
+
+1. **Specificity**: Each targets concrete, provable patterns
+2. **Structure**: Check-based or principle-based organization
+3. **Examples**: Red flags, safe patterns, not-a-bug sections
+4. **Calibration**: Confidence thresholds and severity guidance
+5. **Historical grounding**: Reference past bugs to sharpen detection
+
+### Copy and Adapt
+
+Use builtin skills as templates:
+
+```bash
+# Copy a builtin skill to customize
+cp -r .agents/skills/find-warden-bugs .agents/skills/find-myapp-bugs
+
+# Edit to target your codebase patterns
+vim .agents/skills/find-myapp-bugs/SKILL.md
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Skills" icon="hammer" href="/skills/creating-skills">
+    Write your own skill based on these examples
+  </Card>
+  
+  <Card title="Remote Skills" icon="cloud" href="/skills/remote-skills">
+    Use skills from other repositories
+  </Card>
+</CardGroup>

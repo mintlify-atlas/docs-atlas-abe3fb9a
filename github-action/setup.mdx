@@ -1,0 +1,198 @@
+---
+title: Setup
+description: Set up Warden as a GitHub Action to automatically review pull requests
+---
+
+Warden can run as a GitHub Action to automatically analyze pull requests using Claude-powered skills. The action posts inline code review comments and can fail checks based on severity thresholds.
+
+## Prerequisites
+
+Before setting up the GitHub Action, you need:
+
+<Steps>
+  <Step title="Anthropic API Key">
+    Get an API key from [Anthropic Console](https://console.anthropic.com). You can also use OAuth tokens from Claude Code.
+  </Step>
+  
+  <Step title="Configuration File">
+    Create a `warden.toml` in your repository root. Run `npx warden init` to generate one:
+    
+    ```bash
+    npx warden init
+    ```
+  </Step>
+  
+  <Step title="GitHub Token">
+    The action needs `contents: write` permission to resolve review threads. This is handled automatically via `github.token` or you can provide a custom token.
+  </Step>
+</Steps>
+
+## Basic Setup
+
+Create `.github/workflows/warden.yml` in your repository:
+
+```yaml .github/workflows/warden.yml
+name: Warden
+
+# contents: write required for resolving review threads via GraphQL
+permissions:
+  contents: write
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: getsentry/warden@v1
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+<Note>
+The action automatically installs Claude Code CLI v2.1.32. No additional setup required.
+</Note>
+
+## Add API Key as Secret
+
+<Steps>
+  <Step title="Navigate to Repository Settings">
+    Go to your repository → Settings → Secrets and variables → Actions
+  </Step>
+  
+  <Step title="Add Secret">
+    Click "New repository secret" and add:
+    - Name: `ANTHROPIC_API_KEY`
+    - Value: Your Anthropic API key (starts with `sk-ant-`)
+  </Step>
+</Steps>
+
+## Using GitHub App Token (Recommended)
+
+For better review thread management, use a GitHub App token instead of `GITHUB_TOKEN`:
+
+```yaml .github/workflows/warden.yml
+name: Warden
+
+permissions:
+  contents: write
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+      
+      - uses: getsentry/warden@v1
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github-token: ${{ steps.app-token.outputs.token }}
+```
+
+## Schedule Workflow
+
+Run Warden on a schedule to analyze your entire codebase and create issues:
+
+```yaml .github/workflows/warden-schedule.yml
+name: Warden Schedule
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+on:
+  schedule:
+    # Run every Monday at 9am UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: getsentry/warden@v1
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+Configure schedule triggers in `warden.toml`:
+
+```toml warden.toml
+version = 1
+
+[[skills]]
+name = "security-audit"
+paths = ["src/**/*.ts"]
+
+[[skills.triggers]]
+type = "schedule"
+issue = "Update security audit findings"
+```
+
+## Authentication Methods
+
+Warden supports multiple authentication methods (checked in order):
+
+1. `anthropic-api-key` input
+2. `WARDEN_ANTHROPIC_API_KEY` environment variable
+3. `ANTHROPIC_API_KEY` environment variable
+4. `CLAUDE_CODE_OAUTH_TOKEN` environment variable (OAuth)
+
+### Using OAuth Token
+
+```yaml
+- uses: getsentry/warden@v1
+  env:
+    CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_OAUTH_TOKEN }}
+```
+
+## Permissions Reference
+
+| Permission | Required | Purpose |
+|------------|----------|----------|
+| `contents: write` | Yes | Resolve review threads via GraphQL |
+| `pull-requests: write` | Auto (via GITHUB_TOKEN) | Post review comments |
+| `checks: write` | Auto (via GITHUB_TOKEN) | Create check runs |
+| `issues: write` | Schedule only | Create/update issues for schedule triggers |
+
+## What Happens on Pull Requests
+
+When a PR is opened or updated, Warden:
+
+1. Installs Claude Code CLI (v2.1.32)
+2. Loads `warden.toml` configuration
+3. Matches triggers against the PR event
+4. Runs matched skills in parallel
+5. Posts inline review comments for findings
+6. Creates a check run with summary
+7. Auto-resolves stale comments from previous pushes
+8. Evaluates fix attempts using Claude
+9. Fails the check if findings exceed threshold (configurable)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/github-action/configuration">
+    Learn how to configure the action inputs and behavior
+  </Card>
+  <Card title="Inputs & Outputs" icon="code" href="/github-action/inputs-outputs">
+    Reference for all action inputs and outputs
+  </Card>
+</CardGroup>

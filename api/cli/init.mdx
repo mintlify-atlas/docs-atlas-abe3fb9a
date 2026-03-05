@@ -1,0 +1,285 @@
+---
+title: 'warden init'
+description: 'Initialize Warden configuration files and bundled skills'
+---
+
+# warden init
+
+Initialize a new Warden setup by creating configuration files, GitHub Actions workflow, and installing bundled skills.
+
+## Usage
+
+```bash
+warden init [options]
+```
+
+## What It Creates
+
+The `init` command sets up everything needed to run Warden:
+
+1. **`warden.toml`** - Configuration file with severity thresholds and skill settings
+2. **`.github/workflows/warden.yml`** - GitHub Actions workflow for PR analysis
+3. **`.agents/skills/`** - Directory with bundled skills for AI agents
+4. **`.gitignore`** - Adds `.warden/` to ignore cache and logs
+5. **`.claude/skills`** - Symlink to `.agents/skills/` (if `.claude/` exists)
+
+## Options
+
+<ParamField path="-f, --force" type="boolean" default="false">
+  Overwrite existing files without prompting
+  
+  ```bash
+  warden init --force
+  warden init -f
+  ```
+</ParamField>
+
+<ParamField path="--quiet" type="boolean" default="false">
+  Suppress non-error output
+  
+  ```bash
+  warden init --quiet
+  ```
+</ParamField>
+
+<ParamField path="--color / --no-color" type="boolean">
+  Force color output on or off
+  
+  ```bash
+  warden init --no-color
+  ```
+</ParamField>
+
+## Interactive Behavior
+
+When run in an interactive terminal (TTY), `init` prompts before installing skills:
+
+```bash
+$ warden init
+
+CONFIG  warden.toml
+  Severity thresholds and skill settings
+  ✓ Created
+
+WORKFLOW  .github/workflows/warden.yml
+  Runs Warden on pull requests via GitHub Actions
+  ✓ Created
+
+SKILLS  .agents/skills
+  Bundled skills for AI agents (security-review, bug-detection)
+  › Install? [Y/n] 
+```
+
+Press `Y` or Enter to install, `n` to skip.
+
+### Non-Interactive Mode
+
+When stdin is not a TTY (CI/CD, scripts), skills are skipped by default:
+
+```bash
+$ warden init < /dev/null
+
+CONFIG  warden.toml
+  ✓ Created
+
+WORKFLOW  .github/workflows/warden.yml
+  ✓ Created
+
+SKILLS  .agents/skills
+  ⊘ Skipped (non-interactive)
+```
+
+## Generated Files
+
+### warden.toml
+
+The configuration file includes:
+
+```toml
+version = 1
+
+[defaults]
+# Severity levels: critical, high, medium, low, info
+failOn = "high"      # Exit with error if findings >= high
+reportOn = "medium"  # Show findings >= medium in output
+
+# Skills are added with: warden add <skill-name>
+```
+
+### .github/workflows/warden.yml
+
+The GitHub Actions workflow:
+
+```yaml
+name: Warden
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    env:
+      WARDEN_MODEL: ${{ secrets.WARDEN_MODEL }}
+      WARDEN_SENTRY_DSN: ${{ secrets.WARDEN_SENTRY_DSN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: getsentry/warden@v2
+        with:
+          anthropic-api-key: ${{ secrets.WARDEN_ANTHROPIC_API_KEY }}
+```
+
+### Bundled Skills
+
+The following skills are copied to `.agents/skills/`:
+
+- **security-review** - Detects security vulnerabilities and unsafe patterns
+- **bug-detection** - Finds logic errors and potential bugs
+- Additional skills included with your Warden version
+
+Skills are physical copies (not symlinks) so you can customize them for your project.
+
+## Exit Codes
+
+<ResponseField name="0" type="Success">
+  Initialization completed successfully
+</ResponseField>
+
+<ResponseField name="1" type="Error">
+  - Not in a git repository
+  - Permission errors writing files
+  - Invalid configuration
+</ResponseField>
+
+## Examples
+
+### Standard Initialization
+
+```bash
+cd /path/to/your/repo
+warden init
+```
+
+### Force Overwrite
+
+Overwrite existing files without prompting:
+
+```bash
+warden init --force
+```
+
+### CI/CD Initialization
+
+For automated setups, redirect stdin to force non-interactive mode:
+
+```bash
+warden init < /dev/null
+```
+
+## Next Steps
+
+After running `init`, the command displays:
+
+```
+Next steps:
+  1. Add a skill: warden add <skill-name>
+  2. Set WARDEN_ANTHROPIC_API_KEY in .env.local
+  3. Add WARDEN_ANTHROPIC_API_KEY to organization or repository secrets
+     https://github.com/owner/repo/settings/secrets/actions
+  4. Commit and open a PR to test
+```
+
+### 1. Add a Skill
+
+Configure which skills run on your code:
+
+```bash
+# Interactive selection
+warden add
+
+# Add specific skill
+warden add security-review
+
+# List available skills
+warden add --list
+```
+
+### 2. Configure API Key Locally
+
+Create `.env.local` in your repository root:
+
+```bash
+echo "WARDEN_ANTHROPIC_API_KEY=sk-ant-..." > .env.local
+```
+
+<Note>
+Add `.env.local` to `.gitignore` to avoid committing secrets. The `init` command already ignores `.warden/` where logs are stored.
+</Note>
+
+### 3. Configure GitHub Secrets
+
+Add the API key to your repository or organization secrets:
+
+1. Go to **Settings → Secrets and variables → Actions**
+2. Click **New repository secret**
+3. Name: `WARDEN_ANTHROPIC_API_KEY`
+4. Value: Your Anthropic API key
+
+Optional secrets:
+- `WARDEN_MODEL` - Override default model (e.g., `claude-sonnet-4.5`)
+- `WARDEN_SENTRY_DSN` - Enable error tracking
+
+### 4. Test with a Pull Request
+
+Commit the generated files and open a PR:
+
+```bash
+git add warden.toml .github/workflows/warden.yml .agents/
+git commit -m "Add Warden configuration"
+git push
+
+# Create a PR - Warden will run automatically
+```
+
+## Existing Files
+
+If configuration files already exist, `init` skips them:
+
+```bash
+$ warden init
+
+CONFIG  warden.toml
+  ⊘ Skipped (already exists)
+
+WORKFLOW  .github/workflows/warden.yml
+  ⊘ Skipped (already exists)
+
+SKILLS  .agents/skills
+  ⊘ Skipped (already installed)
+
+All configuration files already exist. Use --force to overwrite.
+```
+
+Use `--force` to overwrite:
+
+```bash
+warden init --force
+```
+
+## Requirements
+
+- Must run from a git repository (checks for `.git/`)
+- Write permissions in the repository root
+- For GitHub Actions workflow: `.github/workflows/` directory will be created if needed
+
+## Related Commands
+
+- [warden add](/api/cli/add) - Add skills to warden.toml
+- [warden](/api/cli/warden) - Run analysis
+- [warden setup-app](/api/cli/setup-app) - Create GitHub App for custom bot identity

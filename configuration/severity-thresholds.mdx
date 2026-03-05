@@ -1,0 +1,532 @@
+---
+title: Severity & Confidence Thresholds
+description: Control when builds fail and what findings are reported
+---
+
+Severity and confidence thresholds control which findings are shown, when builds fail, and how GitHub PRs are reviewed.
+
+## Severity Levels
+
+Findings are classified into three severity levels:
+
+<Accordion title="high">
+  **Critical issues that should block merging.**
+  
+  Examples:
+  - Security vulnerabilities
+  - Data corruption risks
+  - Authentication bypasses
+  - Memory leaks
+  - Logic errors causing incorrect behavior
+  
+  ```toml
+  [defaults]
+  failOn = "high"  # Block merge on high severity
+  ```
+</Accordion>
+
+<Accordion title="medium">
+  **Issues worth reviewing before merge.**
+  
+  Examples:
+  - Code quality problems
+  - Potential bugs
+  - Performance issues
+  - Maintainability concerns
+  - Missing error handling
+  
+  ```toml
+  [defaults]
+  reportOn = "medium"  # Show medium and high
+  ```
+</Accordion>
+
+<Accordion title="low">
+  **Minor improvements and suggestions.**
+  
+  Examples:
+  - Style inconsistencies
+  - Documentation suggestions
+  - Minor optimizations
+  - Refactoring opportunities
+  
+  ```toml
+  [defaults]
+  reportOn = "low"  # Show all findings
+  ```
+</Accordion>
+
+<Note>
+  **Legacy compatibility:** Old findings may use `critical` (mapped to `high`) or `info` (mapped to `low`). These are automatically normalized.
+</Note>
+
+## Confidence Levels
+
+Confidence indicates how certain the skill is about a finding:
+
+- **`high`** - Definite issue, very likely correct
+- **`medium`** - Probable issue, may need verification
+- **`low`** - Possible issue, human review recommended
+
+```toml
+[defaults]
+minConfidence = "medium"  # Filter out low confidence findings
+```
+
+<Note>
+  Findings without a confidence field are always included (backwards compatibility).
+</Note>
+
+## Threshold Configuration
+
+### failOn
+
+<ParamField path="failOn" type="enum">
+  Exit with code 1 when findings meet this severity threshold.
+  
+  **Values:** `"off"`, `"high"`, `"medium"`, `"low"`  
+  **Default:** Not set (never fails)
+  
+  **Effect:**
+  - CLI exits with code 1
+  - GitHub Actions check fails (if `failCheck = true`)
+  - GitHub review uses `REQUEST_CHANGES` (if `requestChanges = true`)
+  
+  ```toml
+  [defaults]
+  failOn = "high"  # Fail on high severity findings
+  ```
+</ParamField>
+
+### reportOn
+
+<ParamField path="reportOn" type="enum">
+  Only show findings at or above this severity level.
+  
+  **Values:** `"off"`, `"high"`, `"medium"`, `"low"`  
+  **Default:** Shows all findings
+  
+  ```toml
+  [defaults]
+  reportOn = "medium"  # Hide low severity findings
+  ```
+</ParamField>
+
+<Note>
+  `reportOn` is a **display filter**. It doesn't affect `failOn` logic—if a low-severity finding triggers `failOn = "low"`, the build still fails even if `reportOn = "high"` hides it from display.
+</Note>
+
+### minConfidence
+
+<ParamField path="minConfidence" type="enum">
+  Filter out findings below this confidence level.
+  
+  **Values:** `"off"`, `"high"`, `"medium"`, `"low"`  
+  **Default:** `"medium"`
+  
+  ```toml
+  [defaults]
+  minConfidence = "high"  # Only show high confidence findings
+  ```
+</ParamField>
+
+## Threshold Precedence
+
+Thresholds can be set at three levels:
+
+1. **Trigger level** (highest priority)
+2. **Skill level**
+3. **Defaults level** (lowest priority)
+
+```toml
+[defaults]
+failOn = "medium"        # Priority 3
+
+[[skills]]
+name = "my-skill"
+failOn = "high"          # Priority 2 (overrides defaults)
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened"]
+failOn = "low"           # Priority 1 (overrides skill and defaults)
+```
+
+## Common Configurations
+
+### Strict CI (fail on high severity)
+
+Block PRs with high severity issues:
+
+```toml
+[defaults]
+failOn = "high"
+reportOn = "medium"
+minConfidence = "high"
+requestChanges = true
+failCheck = true
+
+[[skills]]
+name = "security-scanner"
+paths = ["src/**/*.ts"]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+### Lenient CI (informational only)
+
+Show findings but never fail builds:
+
+```toml
+[defaults]
+failOn = "off"           # Never fail
+reportOn = "low"         # Show everything
+minConfidence = "low"    # Show all confidence levels
+
+[[skills]]
+name = "code-quality"
+paths = ["src/**/*.ts"]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+### Progressive Strictness
+
+Different thresholds for different skills:
+
+```toml
+[defaults]
+failOn = "high"
+reportOn = "medium"
+
+# Critical security checks
+[[skills]]
+name = "security-scanner"
+paths = ["src/auth/**", "src/payments/**"]
+failOn = "high"          # Fail on high
+minConfidence = "high"   # High confidence only
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+
+# General code quality
+[[skills]]
+name = "code-quality"
+paths = ["src/**/*.ts"]
+ignorepaths = ["src/auth/**", "src/payments/**"]
+failOn = "medium"        # More lenient
+minConfidence = "medium"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+### Different Thresholds by Trigger
+
+Strict on PR, lenient locally:
+
+```toml
+[[skills]]
+name = "my-skill"
+paths = ["src/**/*.ts"]
+
+# Strict PR checks
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+failOn = "high"
+minConfidence = "high"
+requestChanges = true
+
+# Lenient local checks
+[[skills.triggers]]
+type = "local"
+failOn = "off"
+reportOn = "low"
+minConfidence = "low"
+```
+
+## GitHub Integration
+
+Threshold settings affect GitHub PR behavior:
+
+### requestChanges
+
+<ParamField path="requestChanges" type="boolean">
+  Use `REQUEST_CHANGES` review event when findings exceed `failOn` threshold.
+  
+  **Default:** `false`
+  
+  ```toml
+  [defaults]
+  failOn = "high"
+  requestChanges = true  # Block PR with REQUEST_CHANGES
+  ```
+</ParamField>
+
+**Effect:**
+- GitHub shows "Changes requested" status
+- PR cannot be merged until changes are addressed
+- Requires re-review to clear
+
+### failCheck
+
+<ParamField path="failCheck" type="boolean">
+  Fail the GitHub Actions check run when findings exceed `failOn` threshold.
+  
+  **Default:** `false`
+  
+  ```toml
+  [defaults]
+  failOn = "high"
+  failCheck = true  # Fail CI check
+  ```
+</ParamField>
+
+**Effect:**
+- GitHub Actions check run shows red ❌
+- Can block PR merge if required checks are enabled
+
+### Behavior Matrix
+
+| failOn | requestChanges | failCheck | Findings | Result |
+|--------|---------------|-----------|----------|--------|
+| `"high"` | `true` | `true` | High severity | Request changes + fail check |
+| `"high"` | `true` | `false` | High severity | Request changes, check passes |
+| `"high"` | `false` | `true` | High severity | Comment review, fail check |
+| `"high"` | `false` | `false` | High severity | Comment review, check passes |
+| `"off"` | any | any | Any | Never fails |
+
+## Filtering Logic
+
+Findings are filtered in this order:
+
+1. **Severity filter** (`reportOn`)
+   - Include findings ≥ `reportOn` threshold
+   - `reportOn = "off"` excludes all findings
+
+2. **Confidence filter** (`minConfidence`)
+   - Include findings ≥ `minConfidence` threshold
+   - `minConfidence = "off"` includes all confidence levels
+   - Findings without confidence are always included
+
+3. **Limit** (`maxFindings`)
+   - Take first N findings after filtering
+
+```toml
+[defaults]
+reportOn = "medium"      # Step 1: Filter to medium+ severity
+minConfidence = "high"   # Step 2: Filter to high confidence
+maxFindings = 50         # Step 3: Take first 50
+```
+
+## CLI Override
+
+Command-line flags override configuration:
+
+```bash
+# Override reportOn threshold
+warden --report-on high
+
+# Override failOn threshold
+warden --fail-on medium
+
+# Override maxFindings limit
+warden --max-findings 100
+
+# Show all findings regardless of config
+warden --report-on low --fail-on off
+```
+
+## Examples by Use Case
+
+### Security-First
+
+Fail fast on any security issue:
+
+```toml
+[[skills]]
+name = "security-scanner"
+paths = ["src/**/*.ts"]
+failOn = "high"
+minConfidence = "high"
+requestChanges = true
+failCheck = true
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+### Code Quality Focus
+
+Report quality issues without blocking:
+
+```toml
+[[skills]]
+name = "code-quality"
+paths = ["src/**/*.ts"]
+failOn = "off"           # Never block
+reportOn = "low"         # Show everything
+minConfidence = "medium" # Filter low confidence
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+### Progressive Enforcement
+
+Start lenient, tighten over time:
+
+```toml
+# Phase 1: Informational
+[defaults]
+failOn = "off"
+reportOn = "low"
+
+# Phase 2: Fail on high severity (after team adjusts)
+# [defaults]
+# failOn = "high"
+# reportOn = "medium"
+
+# Phase 3: Fail on medium severity (after code improves)
+# [defaults]
+# failOn = "medium"
+# reportOn = "medium"
+```
+
+### High-Confidence Only
+
+Minimize false positives:
+
+```toml
+[defaults]
+minConfidence = "high"   # Only show high confidence
+reportOn = "medium"      # Medium+ severity
+failOn = "high"          # Fail on high severity
+
+[[skills]]
+name = "my-skill"
+paths = ["src/**/*.ts"]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+## Troubleshooting
+
+<Accordion title="No findings reported">
+  Check these settings:
+  
+  1. **reportOn threshold too high:**
+     ```toml
+     reportOn = "low"  # Show all findings
+     ```
+  
+  2. **minConfidence too high:**
+     ```toml
+     minConfidence = "low"  # Show all confidence levels
+     ```
+  
+  3. **Use CLI flags to override:**
+     ```bash
+     warden --report-on low --min-confidence low
+     ```
+</Accordion>
+
+<Accordion title="Build failing unexpectedly">
+  Check `failOn` threshold:
+  
+  ```bash
+  # See which findings triggered failure
+  warden -v
+  
+  # Temporarily disable failing
+  warden --fail-on off
+  ```
+  
+  Adjust threshold:
+  ```toml
+  [defaults]
+  failOn = "high"  # Less strict
+  ```
+</Accordion>
+
+<Accordion title="Too many low-severity findings">
+  Filter display:
+  
+  ```toml
+  [defaults]
+  reportOn = "medium"      # Hide low severity
+  minConfidence = "medium" # Hide low confidence
+  maxFindings = 20         # Limit output
+  ```
+</Accordion>
+
+## Best Practices
+
+1. **Start lenient, tighten gradually**
+   ```toml
+   # Week 1-2: Informational
+   failOn = "off"
+   
+   # Week 3-4: Fail on high
+   failOn = "high"
+   
+   # Week 5+: Fail on medium
+   failOn = "medium"
+   ```
+
+2. **Different thresholds for different code**
+   ```toml
+   # Critical paths: strict
+   [[skills]]
+   name = "security"
+   paths = ["src/auth/**"]
+   failOn = "high"
+   minConfidence = "high"
+   
+   # General code: lenient
+   [[skills]]
+   name = "quality"
+   paths = ["src/**"]
+   failOn = "medium"
+   minConfidence = "medium"
+   ```
+
+3. **Use confidence to reduce noise**
+   ```toml
+   [defaults]
+   minConfidence = "medium"  # Filter speculative findings
+   ```
+
+4. **Limit findings in early adoption**
+   ```toml
+   [defaults]
+   maxFindings = 20  # Prevent overwhelming output
+   ```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skill Configuration" icon="puzzle-piece" href="/configuration/skill-config">
+    Configure individual skills
+  </Card>
+  <Card title="Triggers" icon="bolt" href="/configuration/triggers">
+    Control when skills run
+  </Card>
+  <Card title="GitHub Actions" icon="github" href="/guides/github-actions">
+    Set up CI/CD integration
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/reference/cli">
+    Command-line options
+  </Card>
+</CardGroup>

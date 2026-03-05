@@ -1,0 +1,440 @@
+---
+title: Config Loading
+description: Load and resolve warden.toml configuration files
+---
+
+Warden's configuration system parses `warden.toml` files and resolves skill configurations into executable triggers with merged defaults.
+
+## loadWardenConfig()
+
+Load and validate a `warden.toml` configuration file.
+
+### Function Signature
+
+```typescript
+function loadWardenConfig(repoPath: string): WardenConfig
+```
+
+<ParamField path="repoPath" type="string" required>
+  Path to the repository root. The function looks for `warden.toml` in this directory.
+</ParamField>
+
+### Returns
+
+<ResponseField name="WardenConfig" type="object">
+  Parsed and validated configuration object:
+  
+  ```typescript
+  interface WardenConfig {
+    version: 1;
+    defaults?: Defaults;
+    skills: SkillConfig[];
+    runner?: RunnerConfig;
+    logs?: LogsConfig;
+  }
+  ```
+</ResponseField>
+
+### Example
+
+```typescript
+import { loadWardenConfig } from '@sentry/warden';
+
+try {
+  const config = loadWardenConfig('/path/to/repo');
+  console.log(`Loaded ${config.skills.length} skills`);
+} catch (error) {
+  if (error instanceof ConfigLoadError) {
+    console.error('Invalid config:', error.message);
+  }
+}
+```
+
+### Error Handling
+
+Throws `ConfigLoadError` with detailed diagnostics:
+
+```typescript
+import { loadWardenConfig, ConfigLoadError } from '@sentry/warden';
+
+try {
+  const config = loadWardenConfig(repoPath);
+} catch (error) {
+  if (error instanceof ConfigLoadError) {
+    // Error types:
+    // - "Configuration file not found"
+    // - "Failed to read configuration file"
+    // - "Failed to parse TOML configuration"
+    // - "Invalid configuration" (with validation details)
+    console.error(error.message);
+  }
+}
+```
+
+### Legacy Format Detection
+
+Detects and provides migration guidance for the old `[[triggers]]` format:
+
+```toml
+# ❌ Legacy format (detected and rejected)
+[[triggers]]
+name = "my-skill"
+event = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+Error message includes migration path:
+
+```
+Legacy [[triggers]] format detected. Migrate to [[skills]] format:
+
+  [[triggers]]               →  [[skills]]
+  name = "my-skill"              name = "my-skill"
+  event = "pull_request"     →  [[skills.triggers]]
+  skill = "my-skill"              type = "pull_request"
+  actions = [...]                 actions = [...]
+```
+
+### Validation
+
+The function validates:
+
+- **File existence** - `warden.toml` must exist in repo root
+- **TOML syntax** - Valid TOML format
+- **Schema conformance** - All fields match expected types
+- **Duplicate names** - Skill names must be unique
+- **Schedule paths** - Skills with `type = "schedule"` must define `paths`
+- **PR actions** - Pull request triggers must specify `actions`
+
+---
+
+## resolveSkillConfigs()
+
+Flattens skill configurations into executable triggers with merged defaults.
+
+### Function Signature
+
+```typescript
+function resolveSkillConfigs(
+  config: WardenConfig,
+  cliModel?: string
+): ResolvedTrigger[]
+```
+
+<ParamField path="config" type="WardenConfig" required>
+  Configuration loaded from `loadWardenConfig()`
+</ParamField>
+
+<ParamField path="cliModel" type="string">
+  Model specified via CLI flag (e.g., `--model`). Used in model precedence chain.
+</ParamField>
+
+### Returns
+
+<ResponseField name="ResolvedTrigger[]" type="ResolvedTrigger[]">
+  Array of resolved triggers, one per skill × trigger combination:
+  
+  ```typescript
+  interface ResolvedTrigger {
+    name: string;                    // Skill name
+    skill: string;                   // Same as name
+    type: TriggerType | '*';         // 'pull_request', 'local', 'schedule', or wildcard
+    actions?: string[];              // PR actions (for pull_request type)
+    remote?: string;                 // Remote repo reference
+    filters: {
+      paths?: string[];              // Include patterns
+      ignorePaths?: string[];        // Exclude patterns
+    };
+    // Merged output options
+    failOn?: SeverityThreshold;
+    reportOn?: SeverityThreshold;
+    maxFindings?: number;
+    reportOnSuccess?: boolean;
+    requestChanges?: boolean;
+    failCheck?: boolean;
+    model?: string;
+    maxTurns?: number;
+    minConfidence?: ConfidenceThreshold;
+    schedule?: ScheduleConfig;
+  }
+  ```
+</ResponseField>
+
+### Example
+
+```typescript
+import { loadWardenConfig, resolveSkillConfigs } from '@sentry/warden';
+
+const config = loadWardenConfig('/path/to/repo');
+const triggers = resolveSkillConfigs(config, 'claude-sonnet-4-20250514');
+
+for (const trigger of triggers) {
+  console.log(`${trigger.name} (${trigger.type})`);
+  console.log(`  Model: ${trigger.model}`);
+  console.log(`  Fail on: ${trigger.failOn ?? 'off'}`);
+}
+```
+
+### Wildcard Triggers
+
+Skills without `[[skills.triggers]]` produce a wildcard entry (`type: '*'`):
+
+```toml
+[[skills]]
+name = "security-review"
+# No triggers = runs everywhere
+```
+
+Resolved as:
+
+```typescript
+{
+  name: "security-review",
+  type: "*",
+  filters: { ignorePaths: [...] },
+  // ... merged defaults
+}
+```
+
+### Multi-Trigger Skills
+
+Each `[[skills.triggers]]` entry generates a separate `ResolvedTrigger`:
+
+```toml
+[[skills]]
+name = "security-review"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+failOn = "high"
+
+[[skills.triggers]]
+type = "schedule"
+failOn = "medium"
+```
+
+Produces two triggers:
+
+```typescript
+[
+  {
+    name: "security-review",
+    type: "pull_request",
+    actions: ["opened", "synchronize"],
+    failOn: "high",
+  },
+  {
+    name: "security-review",
+    type: "schedule",
+    failOn: "medium",
+  },
+]
+```
+
+### Model Precedence
+
+Model selection follows a 6-level precedence chain (highest to lowest):
+
+1. Trigger-level `model` (per-trigger override)
+2. Skill-level `model` (per-skill default)
+3. `defaults.model` (global default in `warden.toml`)
+4. `cliModel` parameter (from `--model` flag)
+5. `WARDEN_MODEL` environment variable
+6. SDK default (not set by `resolveSkillConfigs`)
+
+```typescript
+const triggers = resolveSkillConfigs(config, 'claude-opus-4-20250514');
+// CLI model applies to skills without explicit model config
+```
+
+### Path Filter Merging
+
+`ignorePaths` is **additive** across defaults and skills:
+
+```toml
+[defaults]
+ignorePaths = ["**/test/**", "**/fixtures/**"]
+
+[[skills]]
+name = "security-review"
+ignorePaths = ["**/generated/**"]
+```
+
+Resolved as:
+
+```typescript
+{
+  filters: {
+    ignorePaths: [
+      "**/test/**",
+      "**/fixtures/**",
+      "**/generated/**",  // merged
+    ],
+  },
+}
+```
+
+### Field Inheritance
+
+All output fields use 3-level precedence:
+
+- **Trigger-level** (highest priority)
+- **Skill-level**
+- **Defaults** (lowest priority)
+
+Example:
+
+```toml
+[defaults]
+failOn = "medium"
+reportOn = "low"
+maxFindings = 50
+
+[[skills]]
+name = "security-review"
+failOn = "high"           # overrides defaults.failOn
+# reportOn inherited from defaults
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened"]
+maxFindings = 10          # overrides skill and defaults
+```
+
+Resolved as:
+
+```typescript
+{
+  failOn: "high",          // from skill
+  reportOn: "low",         // from defaults
+  maxFindings: 10,         // from trigger
+}
+```
+
+---
+
+## Configuration Types
+
+### WardenConfig
+
+```typescript
+interface WardenConfig {
+  version: 1;
+  defaults?: Defaults;
+  skills: SkillConfig[];
+  runner?: RunnerConfig;
+  logs?: LogsConfig;
+}
+```
+
+### SkillConfig
+
+```typescript
+interface SkillConfig {
+  name: string;
+  paths?: string[];              // Include patterns
+  ignorePaths?: string[];        // Exclude patterns
+  remote?: string;               // Remote repo (e.g., "owner/repo@sha")
+  failOn?: SeverityThreshold;
+  reportOn?: SeverityThreshold;
+  maxFindings?: number;
+  reportOnSuccess?: boolean;
+  requestChanges?: boolean;
+  failCheck?: boolean;
+  model?: string;
+  maxTurns?: number;
+  minConfidence?: ConfidenceThreshold;
+  triggers?: SkillTrigger[];
+}
+```
+
+### SkillTrigger
+
+```typescript
+interface SkillTrigger {
+  type: 'pull_request' | 'local' | 'schedule';
+  actions?: string[];            // Required for pull_request
+  failOn?: SeverityThreshold;
+  reportOn?: SeverityThreshold;
+  maxFindings?: number;
+  reportOnSuccess?: boolean;
+  requestChanges?: boolean;
+  failCheck?: boolean;
+  model?: string;
+  maxTurns?: number;
+  minConfidence?: ConfidenceThreshold;
+  schedule?: ScheduleConfig;
+}
+```
+
+### Defaults
+
+```typescript
+interface Defaults {
+  failOn?: SeverityThreshold;
+  reportOn?: SeverityThreshold;
+  maxFindings?: number;
+  reportOnSuccess?: boolean;
+  requestChanges?: boolean;
+  failCheck?: boolean;
+  model?: string;
+  maxTurns?: number;
+  minConfidence?: ConfidenceThreshold;
+  ignorePaths?: string[];
+  defaultBranch?: string;
+  chunking?: ChunkingConfig;
+  batchDelayMs?: number;
+  auxiliaryMaxRetries?: number;
+}
+```
+
+---
+
+## Complete Example
+
+```typescript
+import { 
+  loadWardenConfig, 
+  resolveSkillConfigs,
+  matchTrigger,
+  type ResolvedTrigger 
+} from '@sentry/warden';
+
+// Load and resolve config
+const config = loadWardenConfig('/path/to/repo');
+const allTriggers = resolveSkillConfigs(config);
+
+// Filter by environment
+function getTriggersForEnvironment(
+  triggers: ResolvedTrigger[],
+  environment: 'github' | 'local'
+): ResolvedTrigger[] {
+  return triggers.filter(t => {
+    // Wildcards match everywhere
+    if (t.type === '*') return true;
+    // Local triggers only in local mode
+    if (t.type === 'local') return environment === 'local';
+    // PR triggers match in both environments
+    if (t.type === 'pull_request') return true;
+    // Schedule triggers don't run in local mode
+    if (t.type === 'schedule') return environment === 'github';
+    return false;
+  });
+}
+
+const githubTriggers = getTriggersForEnvironment(allTriggers, 'github');
+console.log(`Found ${githubTriggers.length} GitHub triggers`);
+
+// Filter by context (see matchTrigger for details)
+import { buildEventContext } from '@sentry/warden';
+const context = await buildEventContext(...);
+const matchedTriggers = githubTriggers.filter(t => 
+  matchTrigger(t, context, 'github')
+);
+```
+
+## Related Functions
+
+- [`matchTrigger()`](/api/trigger-matching) - Check if a trigger matches an event
+- [`runSkill()`](/api/run-skill) - Execute a skill with resolved config

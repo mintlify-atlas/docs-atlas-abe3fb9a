@@ -1,0 +1,189 @@
+---
+title: 'Skills Overview'
+description: 'Understanding Warden skills and how they work'
+---
+
+## What are Skills?
+
+Skills are specialized AI agents that analyze your code for specific issues. Each skill is an expert in a particular domain—bug detection, security review, architecture analysis—and knows exactly what to look for.
+
+Warden runs skills against your code changes automatically based on triggers you configure. Skills receive focused chunks of code from the diff pipeline and apply their domain expertise to find issues.
+
+## How Skills Work
+
+<Steps>
+  <Step title="Event triggers">
+    A GitHub event (pull request, schedule, etc.) matches a trigger in your `warden.toml`
+  </Step>
+  
+  <Step title="Diff analysis">
+    Warden parses the diff and extracts changed hunks with surrounding context
+  </Step>
+  
+  <Step title="Skill execution">
+    Each configured skill analyzes the relevant hunks using Claude
+  </Step>
+  
+  <Step title="Report generation">
+    Findings are collected, deduplicated, and formatted for output (GitHub checks, CLI, JSON)
+  </Step>
+</Steps>
+
+## Skill Anatomy
+
+Every skill is a markdown file with YAML frontmatter:
+
+```markdown
+---
+name: find-warden-bugs
+description: "Detect bugs at known architectural seams"
+allowed-tools: Read Grep Glob
+---
+
+You are an expert bug hunter...
+
+## Scope
+
+Analyze each code chunk against the checks below...
+```
+
+The frontmatter defines metadata, while the body contains the prompt that guides Claude's analysis.
+
+## Skill Discovery
+
+Warden discovers skills from conventional directories in your repository:
+
+<CodeGroup>
+```bash Primary location
+.agents/skills/
+└── find-warden-bugs/
+    └── SKILL.md
+```
+
+```bash Alternative locations
+.claude/skills/    # Claude Code convention
+.warden/skills/    # Legacy
+```
+</CodeGroup>
+
+Skills can also be loaded from:
+- **Direct paths**: `./custom/my-skill.md`
+- **Remote repositories**: `getsentry/sentry-skills`
+
+## Skill Types
+
+### Bug Detection
+
+Target specific bug patterns based on historical fixes or known anti-patterns.
+
+**Example**: `find-warden-bugs` detects issues at architectural seams where bugs have repeatedly occurred—SDK IPC, config threading, concurrent execution.
+
+### Architecture Review
+
+Analyze structural health: module complexity, silent failures, type safety gaps, test coverage.
+
+**Example**: `architecture-review` performs staff-level codebase health reviews, finding monolithic modules and test coverage holes.
+
+### Code Quality
+
+Enforce conventions, spot code smells, suggest refactorings.
+
+**Example**: `code-simplifier` identifies overly complex code and suggests simpler alternatives.
+
+### Security Analysis
+
+Find vulnerabilities: injection flaws, auth bypasses, sensitive data exposure.
+
+**Example**: Custom security skills can check for SQL injection, XSS, hardcoded secrets.
+
+## Configuration
+
+Skills are configured in `warden.toml`:
+
+```toml warden.toml
+[[skills]]
+name = "find-warden-bugs"
+paths = ["src/**/*.ts"]
+ignorePaths = ["src/**/*.test.ts"]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize"]
+```
+
+See [Configuration](/essentials/configuration) for all options.
+
+## Skill Lifecycle
+
+1. **Skill resolution**: Warden loads the skill definition from `.agents/skills/`, remote repo, or direct path
+2. **File preparation**: Filters files by `paths` and `ignorePaths`, extracts diff hunks
+3. **Analysis**: Claude receives the hunk + context + skill prompt
+4. **Validation**: Findings are validated against hunk line ranges
+5. **Deduplication**: Cross-location findings are merged
+6. **Reporting**: Findings are formatted and output
+
+## Best Practices
+
+<Tip>
+**Start specific, expand later**
+
+Create skills that target known problems in your codebase first. Don't try to catch everything—focus on issues that cause real production incidents.
+</Tip>
+
+<Note>
+**One skill, one domain**
+
+Keep skills focused. A skill that checks "everything" becomes too generic. Separate concerns: security, performance, correctness.
+</Note>
+
+### Skill Naming
+
+- Use lowercase with hyphens: `find-auth-bugs`, `security-review`
+- Name reflects what the skill does: `check-sql-injection`, `detect-race-conditions`
+- Avoid vague names: `code-quality`, `best-practices`
+
+### Trigger Configuration
+
+- Use `pull_request` triggers for code review workflows
+- Use `schedule` triggers for full-repo sweeps
+- Use `local` triggers for manual CLI runs
+- Scope skills to relevant paths to reduce cost
+
+### Cost Management
+
+<Accordion title="Understanding skill costs">
+  Each skill invocation uses Claude API tokens:
+  - Input tokens: hunk + context + skill prompt
+  - Output tokens: findings + explanations
+  
+  Costs scale with:
+  - Number of changed files (more hunks → more API calls)
+  - Skill prompt length (longer prompts → higher input cost)
+  - Context size (larger context → higher input cost)
+  
+  Strategies to reduce cost:
+  - Scope skills to specific paths (`paths = ["src/critical/**"]`)
+  - Use shorter, focused skill prompts
+  - Limit context file count in config
+  - Pin skills to specific triggers (don't run all skills on every event)
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Skills" icon="hammer" href="/skills/creating-skills">
+    Write your first skill from scratch
+  </Card>
+  
+  <Card title="Skill Structure" icon="file-code" href="/skills/skill-structure">
+    Deep dive into skill file format
+  </Card>
+  
+  <Card title="Builtin Skills" icon="books" href="/skills/builtin-skills">
+    Explore Warden's builtin skills
+  </Card>
+  
+  <Card title="Remote Skills" icon="cloud" href="/skills/remote-skills">
+    Use skills from other repositories
+  </Card>
+</CardGroup>
