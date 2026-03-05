@@ -77,15 +77,15 @@ warden --config ./configs/strict.toml
 
 Default: `warden.toml` in repo root.
 
-#### --skills
+#### --skill
 
-Run specific skills only:
+Run a specific skill only:
 
 ```bash
-warden --skills find-bugs,security-audit
+warden --skill find-bugs
 ```
 
-Comma-separated skill names.
+Skill name from warden.toml.
 
 #### --fail-on
 
@@ -109,6 +109,19 @@ warden --report-on low
 ```
 
 Values: `off`, `high`, `medium`, `low`
+
+#### --min-confidence
+
+Minimum confidence level to show in output:
+
+```bash
+warden --min-confidence high
+warden --min-confidence medium
+```
+
+Values: `off`, `high`, `medium`, `low`
+
+Default: `medium`
 
 #### --max-findings
 
@@ -178,7 +191,53 @@ Number of concurrent skill executions:
 warden --parallel 3
 ```
 
-Default: 5
+Default: 4
+
+#### --fail-fast, -x
+
+Stop after first finding:
+
+```bash
+warden --fail-fast
+```
+
+Useful for quick checks or CI pipelines.
+
+#### --staged
+
+Analyze only staged changes (git diff --cached):
+
+```bash
+warden --staged
+```
+
+#### --git
+
+Force ambiguous targets to be treated as git refs:
+
+```bash
+warden --git feature
+```
+
+#### --offline
+
+Use cached remote skills without network access:
+
+```bash
+warden --offline
+```
+
+Useful for offline development or air-gapped environments.
+
+#### --model, -m
+
+Override model for all skills:
+
+```bash
+warden --model claude-sonnet-4-20250514
+```
+
+Fallback when not set in config.
 
 ### Other
 
@@ -344,11 +403,11 @@ warden
     ```
   </Accordion>
 
-  <Accordion title="Run specific skills">
-    Use `--skills` flag:
+  <Accordion title="Run specific skill">
+    Use `--skill` flag:
 
     ```bash
-    warden --skills security-audit
+    warden --skill security-audit
     ```
   </Accordion>
 
