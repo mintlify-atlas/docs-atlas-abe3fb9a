@@ -1,0 +1,152 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Warden",
+  "projectDescription": "Event-driven code analysis agent that reviews your code using Claude-powered skills",
+  "theme": "aspen",
+  "primaryColor": "#848484",
+  "lightColor": "#0d0d0d",
+  "darkColor": "#c8c8c8",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/skills",
+              "concepts/triggers",
+              "concepts/findings",
+              "concepts/configuration"
+            ]
+          },
+          {
+            "group": "CLI Usage",
+            "pages": [
+              "cli/overview",
+              "cli/init",
+              "cli/analyze",
+              "cli/fix",
+              "cli/logs",
+              "cli/add",
+              "cli/sync",
+              "cli/setup-app"
+            ]
+          },
+          {
+            "group": "GitHub Action",
+            "pages": [
+              "github-action/setup",
+              "github-action/configuration",
+              "github-action/inputs-outputs"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/warden-toml",
+              "configuration/skill-config",
+              "configuration/triggers",
+              "configuration/path-filtering",
+              "configuration/severity-thresholds"
+            ]
+          },
+          {
+            "group": "Skills",
+            "pages": [
+              "skills/overview",
+              "skills/creating-skills",
+              "skills/skill-structure",
+              "skills/builtin-skills",
+              "skills/remote-skills"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/authentication",
+              "advanced/cost-tracking",
+              "advanced/retry-logic",
+              "advanced/output-formats",
+              "advanced/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Library API",
+            "pages": [
+              "api/overview",
+              "api/run-skill",
+              "api/config-loading",
+              "api/event-context",
+              "api/trigger-matching",
+              "api/output-rendering"
+            ]
+          },
+          {
+            "group": "Types",
+            "pages": [
+              "api/types/skill-report",
+              "api/types/finding",
+              "api/types/event-context",
+              "api/types/configuration"
+            ]
+          },
+          {
+            "group": "CLI Commands",
+            "pages": [
+              "api/cli/warden",
+              "api/cli/init",
+              "api/cli/add",
+              "api/cli/logs",
+              "api/cli/sync",
+              "api/cli/setup-app"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Skills-based modular code analysis",
+    "Run locally via CLI or automatically on pull requests",
+    "Auto-fix issues with suggested patches",
+    "Event-driven triggers for pull requests, schedules, and local changes",
+    "TOML configuration with skill definitions",
+    "Cost tracking and usage statistics",
+    "GitHub-native PR comments and annotations",
+    "Multiple output formats (terminal, JSON, JSONL)"
+  ],
+  "publicApiSurface": [
+    "warden (main CLI command)",
+    "warden init",
+    "warden --fix",
+    "warden add",
+    "warden logs",
+    "warden sync",
+    "warden setup-app",
+    "runSkill()",
+    "loadWardenConfig()",
+    "resolveSkillConfigs()",
+    "buildEventContext()",
+    "matchTrigger()",
+    "renderSkillReport()",
+    "SkillReport",
+    "Finding",
+    "EventContext",
+    "SkillConfig",
+    "WardenConfig"
+  ]
+}
